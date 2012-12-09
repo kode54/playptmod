@@ -8,6 +8,7 @@ extern "C" {
 void * playptmod_Create(int samplingFrequency);
 
 #define PTMOD_OPTION_CLAMP_PERIODS 0
+#define PTMOD_OPTION_VSYNC_TIMING  1
 
 void playptmod_Config(void *p, int option, int value);
 

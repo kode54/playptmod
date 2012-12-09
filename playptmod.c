@@ -212,6 +212,7 @@ typedef struct player_data
   float vsync_block_length, vsync_samples_left, *mixer_buffer_l, *mixer_buffer_r, *pt_period_freq_tab, *pt_extended_period_freq_tab;
   unsigned char *pt_tab_vibsine;
   int minPeriod, maxPeriod, calculatedMinPeriod, calculatedMaxPeriod;
+  int vsync_timing;
   Voice v[PAULA_CHANNELS];
   Filter filter;
   FilterC filter_c;
@@ -1919,7 +1920,7 @@ static void effect_tempo(player *p, mod_channel *ch)
 {
   if (!p->mod_tick)
   {
-    if ((ch->param > 0) && (ch->param < 32))
+    if ((ch->param > 0) && (p->vsync_timing || (ch->param < 32)))
       pt_mod_speed(p, ch->param);
     else if (ch->param)
       pt_mod_tempo(p, ch->param);
@@ -2233,6 +2234,8 @@ void * playptmod_Create(int samplingFrequency)
   p->minPeriod = PT_MIN_PERIOD;
   p->maxPeriod = PT_MAX_PERIOD;
 
+  p->vsync_timing = 0;
+
   p->mixerBuffer = (signed char *)calloc(soundBufferSize, 1);
 
   mixer_cut_channels(p);
@@ -2257,6 +2260,10 @@ void playptmod_Config(void *_p, int option, int value)
             p->maxPeriod = p->calculatedMaxPeriod;
         }
         break;
+
+	case PTMOD_OPTION_VSYNC_TIMING:
+		p->vsync_timing = value;
+		break;
     }
 }
 
