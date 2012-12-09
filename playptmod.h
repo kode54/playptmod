@@ -26,6 +26,8 @@ typedef struct _ptmi
   unsigned char order;
   unsigned char pattern;
   unsigned char row;
+  unsigned char speed;
+  unsigned char tempo;
   unsigned char channels_playing;
 } playptmod_info;
 

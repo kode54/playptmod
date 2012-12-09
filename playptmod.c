@@ -324,7 +324,7 @@ void maketables(player *p, int sound_frequency)
   for (i = 0; i < 32; i++)
     p->pt_tab_vibsine[i] = (unsigned char)floorf(sinf((float)i * FM_PI / 32.0f) * 255.0f);
 
-  p->pt_period_freq_tab = (float *)malloc(sizeof (float) * 907);
+  p->pt_period_freq_tab = (float *)malloc(sizeof (float) * 908);
   for (i = 108; i <= 907; i++) // 0..107 will never be looked up, junk is OK
     p->pt_period_freq_tab[i] = (3546895.0f / (float)i) / (float)sound_frequency;
 
@@ -2331,6 +2331,9 @@ void playptmod_Free(void *_p)
     if (p->source->original_sample_data != NULL)
       free(p->source->original_sample_data);
 
+    if (p->source != NULL)
+      free(p->source);
+
     p->moduleLoaded = 0;
   }
 
@@ -2353,9 +2356,11 @@ void playptmod_GetInfo(void *_p, playptmod_info *i)
 {
   int n, c;
   player *p = (player *)_p;
-  i->order = p->mod_order;
+  i->order = p->mod_order <= 128 ? p->mod_order : 0;
   i->pattern = p->mod_pattern;
   i->row = p->mod_row;
+  i->speed = p->mod_speed;
+  i->tempo = p->mod_bpm;
   for (c = 0, n = 0; n < p->source->head.channel_count; n++)
   {
     if (p->v[n].data) c++;
