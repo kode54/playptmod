@@ -1,5 +1,5 @@
 /*
-** - --=playptmod v0.61 - 8bitbubsy 2010-2012=-- -
+** - --=playptmod v0.64 - 8bitbubsy 2010-2012=-- -
 ** This is the portable library version, which requires a separate
 ** audio output method, to be used in a production zip/rar whatever.
 **
