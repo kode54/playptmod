@@ -2295,7 +2295,7 @@ void playptmod_Play(void *_p, unsigned int start_order)
 
     p->mod_order = p->mod_start_order = start_order;
     p->loop_counter = 0;
-    p->mod_pattern = p->source->head.order[0];
+    p->mod_pattern = p->source->head.order[start_order];
     p->mod_row = 0;
     p->mod_tick = 0;
 
