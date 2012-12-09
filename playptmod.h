@@ -1,6 +1,10 @@
 #ifndef _PLAYPTMOD_H_
 #define _PLAYPTMOD_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void * playptmod_Create(int samplingFrequency);
 
 #define PTMOD_OPTION_CLAMP_PERIODS 0
@@ -27,5 +31,9 @@ typedef struct _ptmi
 void playptmod_GetInfo(void *p, playptmod_info *i);
 
 void playptmod_Free(void *p);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
