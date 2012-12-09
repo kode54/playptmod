@@ -330,7 +330,7 @@ void maketables(player *p, int sound_frequency)
 
   for (j = 0; j < 16; j++)
     for (i = 0; i < 85; i++)
-      extendedRawPeriodTable[(j * 85) + i] = i == 84 ? 0 : npertab[i] * finetune[j] / 8363;
+      extendedRawPeriodTable[(j * 85) + i] = i == 84 ? 0 : npertab[i] * 8363 / finetune[j];
 
   p->calculatedMaxPeriod = maxPeriod = extendedRawPeriodTable[8 * 85];
   p->calculatedMinPeriod = minPeriod = extendedRawPeriodTable[7 * 85 + 83];
