@@ -1078,21 +1078,34 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
   bufseek(fModule, 0, SEEK_END);
   for (i = p->source->head.format == FORMAT_STK ? 14 : 30; i >= 0; i--)
   {
-    if (p->source->samples[i].length)
+    if (p->source->samples[i].length >= 5)
     {
       j = (p->source->samples[i].length + 1) / 2 + 5 + 16;
-      bufseek(fModule, -j, SEEK_CUR);
-      bufread(MK, 1, 5, fModule);
-      if (!memcmp(MK, "ADPCM", 5))
+      if (j < p->source->samples[i].length)
       {
-        total_sample_size += j;
-        bufseek(fModule, -5, SEEK_CUR);
+        bufseek(fModule, -j, SEEK_CUR);
+        bufread(MK, 1, 5, fModule);
+        if (!memcmp(MK, "ADPCM", 5))
+        {
+          total_sample_size += j;
+          bufseek(fModule, -5, SEEK_CUR);
+        }
+        else
+        {
+          total_sample_size += p->source->samples[i].length;
+          bufseek(fModule, -(signed long)(p->source->samples[i].length + 5 - j), SEEK_CUR);
+        }
       }
       else
       {
         total_sample_size += p->source->samples[i].length;
-        bufseek(fModule, -(p->source->samples[i].length + 5 - j), SEEK_CUR);
+        bufseek(fModule, -(signed long)p->source->samples[i].length, SEEK_CUR);
       }
+    }
+    else
+    {
+      total_sample_size += p->source->samples[i].length;
+      bufseek(fModule, -(signed long)p->source->samples[i].length, SEEK_CUR);
     }
   }
 
@@ -1215,20 +1228,28 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     unsigned char byte;
     signed char compression_table[16];
     p->source->samples[i].offset = sample_offset;
-    bufread(compression_table, 1, 5, fModule);
-    if (!memcmp(compression_table, "ADPCM", 5))
+    if (p->source->samples[i].length >= 5)
     {
-      delta = 0;
-      bufread(compression_table, 1, 16, fModule);
-      for (j = 0; j < p->source->samples[i].length; j++)
+      bufread(compression_table, 1, 5, fModule);
+      if (!memcmp(compression_table, "ADPCM", 5))
       {
-        bufread(&byte, 1, 1, fModule);
-        delta += compression_table[LO_NYBBLE(byte)];
-        p->source->sample_data[sample_offset + j] = delta;
-        j++;
-        if (j >= p->source->samples[i].length) break;
-        delta += compression_table[HI_NYBBLE(byte)];
-        p->source->sample_data[sample_offset + j] = delta;
+        delta = 0;
+        bufread(compression_table, 1, 16, fModule);
+        for (j = 0; j < p->source->samples[i].length; j++)
+        {
+          bufread(&byte, 1, 1, fModule);
+          delta += compression_table[LO_NYBBLE(byte)];
+          p->source->sample_data[sample_offset + j] = delta;
+          j++;
+          if (j >= p->source->samples[i].length) break;
+          delta += compression_table[HI_NYBBLE(byte)];
+          p->source->sample_data[sample_offset + j] = delta;
+        }
+      }
+      else
+      {
+        memcpy(&p->source->sample_data[sample_offset], compression_table, 5);
+        bufread(&p->source->sample_data[sample_offset + 5], 1, p->source->samples[i].length - 5, fModule);
       }
     }
     else
