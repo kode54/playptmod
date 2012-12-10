@@ -188,6 +188,7 @@ typedef struct voice_data
   int index, new_len, new_loop_len, new_loop_end, swap_sample_flag;
   int step, new_step;
   float rate, frac;
+  int mute;
 } Voice;
 
 typedef struct blep_data
@@ -564,7 +565,7 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
         while (offset >= 0.0f && j < samples_to_mix)
         {
           signed short t_s = (p->v[i].data ? (step == 2 ? (p->v[i].data[p->v[i].index] + p->v[i].data[p->v[i].index + 1] * 0x100) : p->v[i].data[p->v[i].index] * 0x100) : 0);
-          signed int t_v = (p->v[i].data ? p->v[i].vol : 0);
+          signed int t_v = (p->v[i].data && !p->v[i].mute ? p->v[i].vol : 0);
           float t_vol = (float)t_v;
           float t_smp = (float)t_s;
           float t_offset = offset - (float)floor(offset);
@@ -2364,6 +2365,12 @@ void playptmod_GetInfo(void *_p, playptmod_info *i)
     if (p->v[n].data) c++;
   }
   i->channels_playing = c;
+}
+
+void playptmod_Mute(void *_p, int channel, int mute)
+{
+  player *p = (player *)_p;
+  p->v[channel].mute = mute;
 }
 
 /* END OF FILE */

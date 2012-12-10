@@ -19,6 +19,8 @@ void playptmod_Play(void *p, unsigned int start_order);
 void playptmod_Stop(void *p);
 void playptmod_Render(void *p, signed short *target, int length);
 
+void playptmod_Mute(void *p, int channel, int mute);
+
 unsigned int playptmod_LoopCounter(void *p);
 
 typedef struct _ptmi
