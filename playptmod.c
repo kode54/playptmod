@@ -824,7 +824,7 @@ static int playptmod_LoadMTM(player *p, BUF *fModule)
 
   for (i = 0; i < p->source->head.pattern_count; i++)
   {
-    note = p->source->patterns[i] = (modnote_t *)malloc(sizeof (modnote_t) * p->source->head.row_count * p->source->head.channel_count);
+    note = p->source->patterns[i] = (modnote_t *)calloc(1, sizeof (modnote_t) * p->source->head.row_count * p->source->head.channel_count);
     if (!note)
     {
       for (j = 0; j < i; j++)
