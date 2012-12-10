@@ -5,9 +5,11 @@ CONFIG -= qt
 
 SOURCES += \
     ../../bubsyplaymod.c \
-    ../../playptmod.c
+    ../../playptmod.c \
+    ../../blip_buf.c
 
 HEADERS += \
-    ../../playptmod.h
+    ../../playptmod.h \
+    ../../blip_buf.h
 
 unix|win32: LIBS += -lao

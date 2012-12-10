@@ -9,6 +9,8 @@
 ** Thanks to ad_/aciddose/adejr for the BLEP and LED filter
 ** routines.
 **
+** BLEP routines replaced with blargg's blip_buf.c -kode54
+**
 ** Note: There's a lot of weird behavior in the coding to
 ** "emulate" the weird stuff ProTracker on the Amiga does.
 ** If you see something fishy in the code, it's probably
@@ -69,6 +71,8 @@
 #include <math.h>
 
 #include "playptmod.h"
+
+#include "blip_buf.h"
 
 #define HI_NYBBLE(x) ((x) >> 4)
 #define LO_NYBBLE(x) ((x) & 0x0F)
@@ -183,7 +187,6 @@ typedef struct paula_filter_coefficients
 typedef struct voice_data
 {
   const signed char *data, *new_data;
-  signed short sample_latch;
   signed int vol, pan_l, pan_r;
   int len, loop_len, loop_end;
   int index, new_len, new_loop_len, new_loop_end, swap_sample_flag;
@@ -191,15 +194,6 @@ typedef struct voice_data
   float rate, frac;
   int mute;
 } Voice;
-
-typedef struct blep_data
-{
-  signed int index;
-  signed int last_value;
-  signed int samples_left;
-  float last_output;
-  float buffer[RNS + 1];
-} blep;
 
 typedef struct player_data
 {
@@ -219,19 +213,10 @@ typedef struct player_data
   Voice v[PAULA_CHANNELS];
   Filter filter;
   FilterC filter_c;
-  blep b[PAULA_CHANNELS], b_vol[PAULA_CHANNELS];
+  blip_t b[PAULA_CHANNELS], b_vol[PAULA_CHANNELS];
+  unsigned int order_played[256];
   MODULE *source;
 } player;
-
-static const unsigned int blepdata[48] =
-{
-  0x3f7fe1f1, 0x3f7fd548, 0x3f7fd6a3, 0x3f7fd4e3, 0x3f7fad85, 0x3f7f2152, 0x3f7dbfae, 0x3f7accdf,
-  0x3f752f1e, 0x3f6b7384, 0x3f5bfbcb, 0x3f455cf2, 0x3f26e524, 0x3f0128c4, 0x3eacc7dc, 0x3e29e86b,
-  0x3c1c1d29, 0xbde4bbe6, 0xbe3aae04, 0xbe48dedd, 0xbe22ad7e, 0xbdb2309a, 0xbb82b620, 0x3d881411,
-  0x3ddadbf3, 0x3de2c81d, 0x3daaa01f, 0x3d1e769a, 0xbbc116d7, 0xbd1402e8, 0xbd38a069, 0xbd0c53bb,
-  0xbc3ffb8c, 0x3c465fd2, 0x3cea5764, 0x3d0a51d6, 0x3ceae2d5, 0x3c92ac5a, 0x3be4cbf7, 0x00000000,
-  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
-};
 
 static const unsigned char pt_tab_invloop[16] =
 {
@@ -424,44 +409,6 @@ static void bufseek(BUF *_SrcBuf, long _Offset, int _Origin)
   }
 }
 
-static void blep_add(blep *b, float offset, float amplitude)
-{
-  const float *src;
-  signed int i;
-  signed int n = NS;
-  float f;
-
-  if (offset > 0.999999999f) // weird bugfix, TODO: Inspect
-    return;
-
-  i = (signed int)(offset * SP);
-  src = (const float *)blepdata + i + SP;
-  f = offset * SP - i;
-
-  i = b->index;
-  while (n--)
-  {
-    b->buffer[i] += amplitude * LERP(src, f);
-    src += SP;
-    i++;
-    i &= RNS;
-  }
-
-  b->samples_left = NS;
-}
-
-static float blep_run(blep *b)
-{
-  const float output = b->buffer[b->index];
-
-  b->buffer[b->index] = 0.0f;
-  b->index++;
-  b->index &= RNS;
-  b->samples_left--;
-
-  return output;
-}
-
 static void mixer_change_ch_src(player *p, int ch, const signed char *src, int len, int loop_start, int loop_len, int step)
 {
   if (src != NULL)
@@ -482,7 +429,6 @@ static void mixer_set_ch_src(player *p, int ch, const signed char *src, int len,
   {
     p->v[ch].swap_sample_flag = 0;
     p->v[ch].data = src;
-    p->v[ch].sample_latch = 0;
     p->v[ch].len = len;
     p->v[ch].index = offset;
     p->v[ch].frac = 0.0f;
@@ -521,8 +467,11 @@ static void mixer_cut_channels(player *p)
   int i;
 
   memset(p->v, 0, sizeof (p->v));
-  memset(p->b, 0, sizeof (p->b));
-  memset(p->b_vol, 0, sizeof (p->b_vol));
+  for (i = 0; i < PAULA_CHANNELS; i++)
+  {
+    blip_clear(&p->b[i]);
+    blip_clear(&p->b_vol[i]);
+  }
   memset(&p->filter, 0, sizeof (p->filter));
 
   p->vsync_samples_left = 0.0f;
@@ -564,23 +513,21 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
       step = p->v[i].step;
       for (j = 0; j < samples_to_mix;)
       {
-        signed short t_s = p->v[i].sample_latch;
+        signed short t_s = (p->v[i].data ? (step == 2 ? (p->v[i].data[p->v[i].index] + p->v[i].data[p->v[i].index + 1] * 0x100) : p->v[i].data[p->v[i].index] * 0x100) : 0);
         signed int t_v = (p->v[i].data && !p->v[i].mute ? p->v[i].vol : 0);
 
         while (j < samples_to_mix && (!p->v[i].data || p->v[i].frac >= 1.0f))
         {
-          float t_vol = (float)t_v;
-          float t_smp = (float)t_s;
+          float t_vol = 0.0f;
+          float t_smp = 0.0f;
           signed int i_smp;
 
           if (p->v[i].data)
             p->v[i].frac -= 1.0f;
 
-          if (p->b_vol[i].samples_left)
-            t_vol += blep_run(&p->b_vol[i]);
+          t_vol += blip_read_sample(&p->b_vol[i]);
 
-          if (p->b[i].samples_left)
-            t_smp += blep_run(&p->b[i]);
+          t_smp += blip_read_sample(&p->b[i]);
 
           t_smp *= t_vol;
           i_smp = (signed int)t_smp;
@@ -593,20 +540,18 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
 
         if (j >= samples_to_mix) break;
 
-        p->v[i].sample_latch = t_s = (p->v[i].data ? (step == 2 ? (p->v[i].data[p->v[i].index] + p->v[i].data[p->v[i].index + 1] * 0x100) : p->v[i].data[p->v[i].index] * 0x100) : 0);
-
         if (t_s != p->b[i].last_value)
         {
-          float delta = (float)(p->b[i].last_value - t_s);
+          float delta = (float)(t_s - p->b[i].last_value);
           p->b[i].last_value = t_s;
-          blep_add(&p->b[i], 0, delta);
+          blip_add_delta(&p->b[i], p->v[i].frac, delta);
         }
 
         if (t_v != p->b_vol[i].last_value)
         {
-          float delta = (float)(p->b_vol[i].last_value - t_v);
+          float delta = (float)(t_v - p->b_vol[i].last_value);
           p->b_vol[i].last_value = t_v;
-          blep_add(&p->b_vol[i], 0, delta);
+          blip_add_delta(&p->b_vol[i], 0, delta);
         }
 
         if (p->v[i].data)
@@ -674,7 +619,7 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
       p->v[i].step = p->v[i].new_step;
     }
 
-    if ((j < samples_to_mix) && (p->v[i].data == NULL) && (p->b[i].samples_left || p->b_vol[i].samples_left))
+    if ((j < samples_to_mix) && (p->v[i].data == NULL))
     {
       for (; j < samples_to_mix; j++)
       {
@@ -682,11 +627,9 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
         float t_smp = (float)p->b[i].last_value;
         signed int i_smp;
 
-        if (p->b_vol[i].samples_left)
-          t_vol += blep_run(&p->b_vol[i]);
+        t_vol += blip_read_sample(&p->b_vol[i]);
 
-        if (p->b[i].samples_left)
-          t_smp += blep_run(&p->b[i]);
+        t_smp += blip_read_sample(&p->b[i]);
 
         t_smp *= t_vol;
         i_smp = (signed int)t_smp;
@@ -2175,8 +2118,8 @@ static void next_position(player *p)
   p->PBreakPosition = 0;
   p->PosJumpAssert = 0;
 
-  if (p->mod_order == p->mod_start_order && p->mod_row == 0)
-      p->loop_counter++;
+  if (p->mod_row == 0)
+    p->loop_counter = p->order_played[p->mod_order]++;
 }
 
 static void process_tick(player *p)
@@ -2377,6 +2320,9 @@ void playptmod_Play(void *_p, unsigned int start_order)
     p->modulePlaying = 1;
 
     memcpy(p->source->sample_data, p->source->original_sample_data, p->source->total_sample_size);
+
+    memset(p->order_played, 0, sizeof(p->order_played));
+    p->order_played[start_order] = 1;
   }
 }
 
@@ -2426,9 +2372,22 @@ void playptmod_GetInfo(void *_p, playptmod_info *i)
 {
   int n, c;
   player *p = (player *)_p;
-  i->order = p->mod_order <= 128 ? p->mod_order : 0;
-  i->pattern = p->mod_pattern;
-  i->row = p->mod_row;
+  int order = p->mod_order;
+  int row = p->mod_row;
+  int pattern = p->mod_pattern;
+  if ((p->mod_row >= p->source->head.row_count) || p->PosJumpAssert)
+  {
+    order++;
+    if (order >= p->source->head.order_count)
+      order = p->source->head.restart_pos;
+
+    row = p->PBreakPosition;
+    pattern = CLAMP(p->source->head.order[order], 0, 127);
+  }
+
+  i->order = order;
+  i->pattern = pattern;
+  i->row = row;
   i->speed = p->mod_speed;
   i->tempo = p->mod_bpm;
   for (c = 0, n = 0; n < p->source->head.channel_count; n++)

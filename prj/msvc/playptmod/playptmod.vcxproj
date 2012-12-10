@@ -11,9 +11,11 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\..\blip_buf.c" />
     <ClCompile Include="..\..\..\playptmod.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\..\blip_buf.h" />
     <ClInclude Include="..\..\..\playptmod.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
