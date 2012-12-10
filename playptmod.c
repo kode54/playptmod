@@ -469,8 +469,8 @@ static void mixer_cut_channels(player *p)
   memset(p->v, 0, sizeof (p->v));
   for (i = 0; i < PAULA_CHANNELS; i++)
   {
-    blip_clear(&p->b[i]);
-    blip_clear(&p->b_vol[i]);
+    ptm_blip_clear(&p->b[i]);
+    ptm_blip_clear(&p->b_vol[i]);
   }
   memset(&p->filter, 0, sizeof (p->filter));
 
@@ -525,9 +525,9 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
           if (p->v[i].data)
             p->v[i].frac -= 1.0f;
 
-          t_vol += blip_read_sample(&p->b_vol[i]);
+          t_vol += ptm_blip_read_sample(&p->b_vol[i]);
 
-          t_smp += blip_read_sample(&p->b[i]);
+          t_smp += ptm_blip_read_sample(&p->b[i]);
 
           t_smp *= t_vol;
           i_smp = (signed int)t_smp;
@@ -544,14 +544,14 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
         {
           float delta = (float)(t_s - p->b[i].last_value);
           p->b[i].last_value = t_s;
-          blip_add_delta(&p->b[i], p->v[i].frac, delta);
+          ptm_blip_add_delta(&p->b[i], p->v[i].frac, delta);
         }
 
         if (t_v != p->b_vol[i].last_value)
         {
           float delta = (float)(t_v - p->b_vol[i].last_value);
           p->b_vol[i].last_value = t_v;
-          blip_add_delta(&p->b_vol[i], 0, delta);
+          ptm_blip_add_delta(&p->b_vol[i], 0, delta);
         }
 
         if (p->v[i].data)
@@ -627,9 +627,9 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
         float t_smp = (float)p->b[i].last_value;
         signed int i_smp;
 
-        t_vol += blip_read_sample(&p->b_vol[i]);
+        t_vol += ptm_blip_read_sample(&p->b_vol[i]);
 
-        t_smp += blip_read_sample(&p->b[i]);
+        t_smp += ptm_blip_read_sample(&p->b[i]);
 
         t_smp *= t_vol;
         i_smp = (signed int)t_smp;

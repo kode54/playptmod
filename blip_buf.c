@@ -57,7 +57,7 @@ enum { min_sample = -32768 };
 			n = ARITH_SHIFT( n, 16 ) ^ max_sample;\
 	}
 
-void blip_clear( blip_t* m )
+void ptm_blip_clear( blip_t* m )
 {
 	/* We could set offset to 0, factor/2, or factor-1. 0 is suitable if
 	factor is rounded up. factor-1 is suitable if factor is rounded down.
@@ -72,7 +72,7 @@ void blip_clear( blip_t* m )
     memset( SAMPLES( m ), 0, 128 * sizeof (buf_t) );
 }
 
-int blip_read_sample( blip_t* m )
+int ptm_blip_read_sample( blip_t* m )
 {
     int retval;
 
@@ -146,7 +146,7 @@ possibly-wider fixed_t. On 32-bit platforms, this is likely more efficient.
 And by having pre_shift 32, a 32-bit platform can easily do the shift by
 simply ignoring the low half. */
 
-void blip_add_delta( blip_t* m, float time, int delta )
+void ptm_blip_add_delta( blip_t* m, float time, int delta )
 {
     unsigned fixed = (unsigned) ((int)(time * time_unit + m->offset) >> pre_shift);
     buf_t* out = SAMPLES( m ) + (m->index + (fixed >> frac_bits)) % 128;

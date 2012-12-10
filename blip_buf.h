@@ -47,19 +47,19 @@ is changed. */
 typedef struct blip_t blip_t;
 
 /** Clears entire buffer. Afterwards, blip_samples_avail() == 0. */
-void blip_clear( blip_t* );
+void ptm_blip_clear( blip_t* );
 
 /** Adds positive/negative delta into buffer at specified clock time. */
-void blip_add_delta( blip_t*, float clock_time, int delta );
+void ptm_blip_add_delta( blip_t*, float clock_time, int delta );
 
 /** Number of buffered samples available for reading. */
-int blip_samples_avail( const blip_t* );
+int ptm_blip_samples_avail( const blip_t* );
 
 /** Reads and removes at most 'count' samples and writes them to 'out'. If
 'stereo' is true, writes output to every other element of 'out', allowing easy
 interleaving of two buffers into a stereo sample stream. Outputs 16-bit signed
 samples. Returns number of samples actually read.  */
-int blip_read_sample( blip_t* );
+int ptm_blip_read_sample( blip_t* );
 
 
 /* Deprecated */
