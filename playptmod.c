@@ -1076,7 +1076,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
   }
 
   bufseek(fModule, 0, SEEK_END);
-  for (i = p->source->head.format == FORMAT_STK ? 30 : 14; i >= 0; i--)
+  for (i = p->source->head.format == FORMAT_STK ? 14 : 30; i >= 0; i--)
   {
     if (p->source->samples[i].length)
     {
@@ -1212,7 +1212,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
   for (i = 0; i < (p->source->head.format == FORMAT_STK ? 15 : 31); i++)
   {
     int delta;
-    signed char byte;
+    unsigned char byte;
     signed char compression_table[16];
     p->source->samples[i].offset = sample_offset;
     bufread(compression_table, 1, 5, fModule);
@@ -1238,7 +1238,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     sample_offset += p->source->samples[i].length;
   }
 
-  p->source->original_sample_data = (signed char *)malloc(total_sample_size);
+  p->source->original_sample_data = (signed char *)malloc(total_sample_count);
   if (p->source->original_sample_data == NULL)
   {
     free(p->source->sample_data);
@@ -1258,8 +1258,8 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     return 0;
   }
 
-  memcpy(p->source->original_sample_data, p->source->sample_data, total_sample_size);
-  p->source->total_sample_size = total_sample_size;
+  memcpy(p->source->original_sample_data, p->source->sample_data, total_sample_count);
+  p->source->total_sample_size = total_sample_count;
 
   bufclose(fModule);
 
