@@ -416,7 +416,7 @@ static void bufseek(BUF *_SrcBuf, long _Offset, int _Origin)
       default: break;
     }
     _Offset = _SrcBuf->buf - _SrcBuf->t_buf;
-    _SrcBuf->remain = _Offset > _SrcBuf->length ? 0 : _SrcBuf->length - _Offset;
+    _SrcBuf->remain = (unsigned long)(_Offset) > _SrcBuf->length ? 0 : _SrcBuf->length - _Offset;
   }
 }
 
@@ -532,7 +532,7 @@ static void mixer_cut_channels(player *p)
     for (i = 0; i < PAULA_CHANNELS; i++)
     {
       mixer_set_ch_vol(p, i, 64);
-      mixer_set_ch_pan(p, i, (i + 1) & 2 ? 192 : 64);
+      mixer_set_ch_pan(p, i, (i + 1) & 2 ? 160 : 96);
     }
 }
 
@@ -567,7 +567,7 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
           signed int t_v = (p->v[i].data ? p->v[i].vol : 0);
           float t_vol = (float)t_v;
           float t_smp = (float)t_s;
-          float t_offset = offset - floor(offset);
+          float t_offset = offset - (float)floor(offset);
           signed int i_smp;
 
           offset -= 1.0f;
@@ -885,8 +885,8 @@ static int playptmod_LoadMTM(player *p, BUF *fModule)
     p->source->samples[i].offset = sample_offset;
     bufread(&p->source->sample_data[sample_offset], 1, p->source->samples[i].length, fModule);
     if (!(p->source->samples[i].attribute & 1))
-      for (j = sample_offset; j < sample_offset + p->source->samples[i].length; j++)
-        p->source->sample_data[j] ^= 0x80;
+      for (j = (int)sample_offset; (unsigned int)j < sample_offset + p->source->samples[i].length; j++)
+        p->source->sample_data[(unsigned int)j] ^= 0x80;
     sample_offset += p->source->samples[i].length;
   }
 
@@ -1104,8 +1104,8 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
         {
           unsigned char bytes[4];
 
-          if (k == 0 && j > 0) bufseek(bytes, -1024, SEEK_CUR);
-          else if (k == 4) bufseek(bytes, 1024 - 4 * 4, SEEK_CUR);
+          if (k == 0 && j > 0) bufseek(fModule, -1024, SEEK_CUR);
+          else if (k == 4) bufseek(fModule, 1024 - 4 * 4, SEEK_CUR);
 
           bufread(bytes, 1, 4, fModule);
 
@@ -1215,7 +1215,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
   p->source->head.row_count = MOD_ROWS;
   memset(p->source->head.vol, 64, PAULA_CHANNELS);
-  for (i = 0; i < PAULA_CHANNELS; i++) p->source->head.pan[i] = ((i + 1) & 2) ? 192 : 64;
+  for (i = 0; i < PAULA_CHANNELS; i++) p->source->head.pan[i] = ((i + 1) & 2) ? 160 : 96;
 
   p->use_led_filter = 0;
   p->moduleLoaded = 1;
@@ -1290,7 +1290,7 @@ static void effecte_invertloop(player *p, mod_channel *ch);
 
 typedef void (*effect_routine)(player *, mod_channel *);
 
-static effect_routine effect_routines[] =
+static const effect_routine effect_routines[] =
 {
   effect_arpeggio,
   effect_portamento_up,
@@ -1310,7 +1310,7 @@ static effect_routine effect_routines[] =
   effect_tempo
 };
 
-static effect_routine effecte_routines[] =
+static const effect_routine effecte_routines[] =
 {
   effecte_setfilter,
   effecte_fineportaup,
@@ -2094,7 +2094,7 @@ static void next_position(player *p)
 {
   int pos = p->mod_order + 1;
   if (pos >= p->source->head.order_count)
-    pos = 0;
+    pos = p->source->head.restart_pos;
 
   p->mod_row = p->PBreakPosition;
   p->mod_order = pos;
@@ -2213,8 +2213,6 @@ void playptmod_Render(void *_p, signed short *target, int length)
 
 void * playptmod_Create(int samplingFrequency)
 {
-  int i;
-
   player *p = calloc(1, sizeof(player));
 
   maketables(p, samplingFrequency);
