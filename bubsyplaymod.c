@@ -5,6 +5,8 @@
 
 #include "playptmod.h"
 
+#define SAMPLE_RATE 44100 /* 22050 - test low-pass capability of blep synthesizer */
+
 static int running;
 
 void signal_handler(int sig)
@@ -36,7 +38,7 @@ int main(int argc, const char* const* argv)
 {
 	void * player;
 	ao_device * dev;
-    ao_sample_format fmt = { 16, 44100, 2, AO_FMT_NATIVE, 0 };
+    ao_sample_format fmt = { 16, SAMPLE_RATE, 2, AO_FMT_NATIVE, 0 };
 
 	signed short sample_buffer[2048 * 2];
 
@@ -46,7 +48,7 @@ int main(int argc, const char* const* argv)
 		return 1;
 	}
 
-	player = playptmod_Create(44100);
+    player = playptmod_Create(SAMPLE_RATE);
 
     playptmod_Config( player, PTMOD_OPTION_CLAMP_PERIODS, 0 );
 
@@ -62,7 +64,7 @@ int main(int argc, const char* const* argv)
 
 	if ( dev )
 	{
-        int fade_start = 0, fade_length = 441000;
+        int fade_start = 0, fade_length = SAMPLE_RATE * 10;
         unsigned int max_channels = 0;
         playptmod_info info;
         running = 1;
