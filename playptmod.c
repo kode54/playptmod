@@ -154,7 +154,7 @@ typedef struct
   unsigned char invloop_delay, invloop_speed;
   unsigned char sample, command, param;
   signed char pattern_loop_row, pattern_loop_times, volume;
-  signed short period, tperiod;	
+  signed short period, tperiod;
   unsigned int tremolopos, vibratopos, offset, sample_offset_temp, invloop_offset;
   int no_note, bug_offset_not_added;
 } mod_channel;
@@ -414,6 +414,7 @@ static void bufseek(BUF *_SrcBuf, long _Offset, int _Origin)
     {
       case SEEK_SET: _SrcBuf->buf = _SrcBuf->t_buf + _Offset; break;
       case SEEK_CUR: _SrcBuf->buf += _Offset; break;
+      case SEEK_END: _SrcBuf->buf = _SrcBuf->t_buf + _SrcBuf->length + _Offset; break;
       default: break;
     }
     _Offset = _SrcBuf->buf - _SrcBuf->t_buf;
@@ -994,7 +995,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
   char MK[5];
 
   int i, j, k;
-  unsigned int total_sample_size = 0, sample_offset = 0, might_be_an_STK_tune = 0;
+  unsigned int total_sample_size = 0, total_sample_count = 0, sample_offset = 0, might_be_an_STK_tune = 0;
 
   p->source = (MODULE *)calloc(1, sizeof (MODULE));
 
@@ -1040,7 +1041,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
       if (p->source->samples[i].loop_length < 2)
              p->source->samples[i].loop_length = 2;
 
-      total_sample_size += p->source->samples[i].length;
+	  total_sample_count += p->source->samples[i].length;
 
       p->source->samples[i].attribute = 0;
     }
@@ -1066,22 +1067,45 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
   if (might_be_an_STK_tune)
     p->source->head.format = FORMAT_STK;
 
-  p->source->head.pattern_count = ((bufLength - total_sample_size) -
-    ((p->source->head.format == FORMAT_STK) ? 600 : 1084 - 4)) / (256 * p->source->head.channel_count);
-
   for (i = 0; i < 128; i++)
   {
     bufread(&p->source->head.order[i], 1, 1, fModule);
 
     if (p->source->head.format == FORMAT_FLT8)
       p->source->head.order[i] >>= 1;
+  }
 
+  bufseek(fModule, 0, SEEK_END);
+  for (i = p->source->head.format == FORMAT_STK ? 30 : 14; i >= 0; i--)
+  {
+    if (p->source->samples[i].length)
+    {
+      j = (p->source->samples[i].length + 1) / 2 + 5 + 16;
+      bufseek(fModule, -j, SEEK_CUR);
+      bufread(MK, 1, 5, fModule);
+      if (!memcmp(MK, "ADPCM", 5))
+      {
+        total_sample_size += j;
+        bufseek(fModule, -5, SEEK_CUR);
+      }
+      else
+      {
+        total_sample_size += p->source->samples[i].length;
+        bufseek(fModule, -(p->source->samples[i].length + 5 - j), SEEK_CUR);
+      }
+    }
+  }
+
+  p->source->head.pattern_count = ((bufLength - total_sample_size) -
+    ((p->source->head.format == FORMAT_STK) ? 600 : 1084 - 4)) / (256 * p->source->head.channel_count);
+
+  for (i = 0; i < 128; i++)
+  {
     if (p->source->head.order[i] >= p->source->head.pattern_count)
       p->source->head.order[i] = 0;
   }
 
-  if (p->source->head.format != FORMAT_STK)
-    bufseek(fModule, 4, SEEK_CUR);
+  bufseek(fModule, p->source->head.format == FORMAT_STK ? 600 : 1084, SEEK_SET);
 
   for (i = 0; i < p->source->head.pattern_count; i++)
   {
@@ -1168,7 +1192,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     }
   }
 
-  p->source->sample_data = (signed char *)malloc(total_sample_size);
+  p->source->sample_data = (signed char *)malloc(total_sample_count);
   if (p->source->sample_data == NULL)
   {
     for (i = 0; i < 128; i++)
@@ -1187,8 +1211,30 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
   for (i = 0; i < (p->source->head.format == FORMAT_STK ? 15 : 31); i++)
   {
+    int delta;
+    signed char byte;
+    signed char compression_table[16];
     p->source->samples[i].offset = sample_offset;
-    bufread(&p->source->sample_data[sample_offset], 1, p->source->samples[i].length, fModule);
+    bufread(compression_table, 1, 5, fModule);
+    if (!memcmp(compression_table, "ADPCM", 5))
+    {
+      delta = 0;
+      bufread(compression_table, 1, 16, fModule);
+      for (j = 0; j < p->source->samples[i].length; j++)
+      {
+        bufread(&byte, 1, 1, fModule);
+        delta += compression_table[LO_NYBBLE(byte)];
+        p->source->sample_data[sample_offset + j] = delta;
+        j++;
+        if (j >= p->source->samples[i].length) break;
+        delta += compression_table[HI_NYBBLE(byte)];
+        p->source->sample_data[sample_offset + j] = delta;
+      }
+    }
+    else
+    {
+      bufread(&p->source->sample_data[sample_offset], 1, p->source->samples[i].length, fModule);
+    }
     sample_offset += p->source->samples[i].length;
   }
 
@@ -2247,26 +2293,26 @@ void * playptmod_Create(int samplingFrequency)
 
 void playptmod_Config(void *_p, int option, int value)
 {
-    player *p = (player *)_p;
-    switch (option)
+  player *p = (player *)_p;
+  switch (option)
+  {
+  case PTMOD_OPTION_CLAMP_PERIODS:
+    if (value)
     {
-    case PTMOD_OPTION_CLAMP_PERIODS:
-        if (value)
-        {
-            p->minPeriod = PT_MIN_PERIOD;
-            p->maxPeriod = PT_MAX_PERIOD;
-        }
-        else
-        {
-            p->minPeriod = p->calculatedMinPeriod;
-            p->maxPeriod = p->calculatedMaxPeriod;
-        }
-        break;
-
-	case PTMOD_OPTION_VSYNC_TIMING:
-		p->vsync_timing = value;
-		break;
+      p->minPeriod = PT_MIN_PERIOD;
+      p->maxPeriod = PT_MAX_PERIOD;
     }
+    else
+    {
+      p->minPeriod = p->calculatedMinPeriod;
+      p->maxPeriod = p->calculatedMaxPeriod;
+    }
+    break;
+
+  case PTMOD_OPTION_VSYNC_TIMING:
+    p->vsync_timing = value;
+    break;
+  }
 }
 
 void playptmod_Play(void *_p, unsigned int start_order)
