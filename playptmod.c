@@ -183,6 +183,7 @@ typedef struct paula_filter_coefficients
 typedef struct voice_data
 {
   const signed char *data, *new_data;
+  signed short sample_latch;
   signed int vol, pan_l, pan_r;
   int len, loop_len, loop_end;
   int index, new_len, new_loop_len, new_loop_end, swap_sample_flag;
@@ -196,6 +197,7 @@ typedef struct blep_data
   signed int index;
   signed int last_value;
   signed int samples_left;
+  float last_output;
   float buffer[RNS + 1];
 } blep;
 
@@ -327,7 +329,7 @@ void maketables(player *p, int sound_frequency)
 
   p->pt_period_freq_tab = (float *)malloc(sizeof (float) * 908);
   for (i = 108; i <= 907; i++) // 0..107 will never be looked up, junk is OK
-    p->pt_period_freq_tab[i] = (3546895.0f / (float)i) / (float)sound_frequency;
+    p->pt_period_freq_tab[i] = (float)sound_frequency / (3546895.0f / (float)i);
 
   for (j = 0; j < 16; j++)
     for (i = 0; i < 85; i++)
@@ -338,7 +340,7 @@ void maketables(player *p, int sound_frequency)
 
   p->pt_extended_period_freq_tab = (float *)malloc(sizeof (float) * (maxPeriod + 1));
   for (i = minPeriod; i <= maxPeriod; i++)
-    p->pt_extended_period_freq_tab[i] = (3546895.0f / (float)i) / (float)sound_frequency;
+    p->pt_extended_period_freq_tab[i] = (float)sound_frequency / (3546895.0f / (float)i);
 }
 
 static inline int period2note(player *p, int finetune, int period)
@@ -480,6 +482,7 @@ static void mixer_set_ch_src(player *p, int ch, const signed char *src, int len,
   {
     p->v[ch].swap_sample_flag = 0;
     p->v[ch].data = src;
+    p->v[ch].sample_latch = 0;
     p->v[ch].len = len;
     p->v[ch].index = offset;
     p->v[ch].frac = 0.0f;
@@ -561,32 +564,17 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
       step = p->v[i].step;
       for (j = 0; j < samples_to_mix;)
       {
-        float offset = p->v[i].frac / (p->v[i].rate ? p->v[i].rate : 1.0f);
+        signed short t_s = p->v[i].sample_latch;
+        signed int t_v = (p->v[i].data && !p->v[i].mute ? p->v[i].vol : 0);
 
-        while (offset >= 0.0f && j < samples_to_mix)
+        while (j < samples_to_mix && (!p->v[i].data || p->v[i].frac >= 1.0f))
         {
-          signed short t_s = (p->v[i].data ? (step == 2 ? (p->v[i].data[p->v[i].index] + p->v[i].data[p->v[i].index + 1] * 0x100) : p->v[i].data[p->v[i].index] * 0x100) : 0);
-          signed int t_v = (p->v[i].data && !p->v[i].mute ? p->v[i].vol : 0);
           float t_vol = (float)t_v;
           float t_smp = (float)t_s;
-          float t_offset = offset - (float)floor(offset);
           signed int i_smp;
 
-          offset -= 1.0f;
-
-          if (t_s != p->b[i].last_value)
-          {
-            float delta = (float)(p->b[i].last_value - t_s);
-            p->b[i].last_value = t_s;
-            blep_add(&p->b[i], t_offset, delta);
-          }
-
-          if (t_v != p->b_vol[i].last_value)
-          {
-            float delta = (float)(p->b_vol[i].last_value - t_v);
-            p->b_vol[i].last_value = t_v;
-            blep_add(&p->b_vol[i], 0, delta);
-          }
+          if (p->v[i].data)
+            p->v[i].frac -= 1.0f;
 
           if (p->b_vol[i].samples_left)
             t_vol += blep_run(&p->b_vol[i]);
@@ -601,62 +589,75 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
           p->mixer_buffer_r[j] += i_smp * p->v[i].pan_r;
 
           j++;
+        }
 
-          if (p->v[i].data)
+        if (j >= samples_to_mix) break;
+
+        p->v[i].sample_latch = t_s = (p->v[i].data ? (step == 2 ? (p->v[i].data[p->v[i].index] + p->v[i].data[p->v[i].index + 1] * 0x100) : p->v[i].data[p->v[i].index] * 0x100) : 0);
+
+        if (t_s != p->b[i].last_value)
+        {
+          float delta = (float)(p->b[i].last_value - t_s);
+          p->b[i].last_value = t_s;
+          blep_add(&p->b[i], 0, delta);
+        }
+
+        if (t_v != p->b_vol[i].last_value)
+        {
+          float delta = (float)(p->b_vol[i].last_value - t_v);
+          p->b_vol[i].last_value = t_v;
+          blep_add(&p->b_vol[i], 0, delta);
+        }
+
+        if (p->v[i].data)
+        {
+          p->v[i].index += step;
+          p->v[i].frac += p->v[i].rate;
+
+          if (p->v[i].loop_len >= 4 * step)
           {
-            p->v[i].frac += p->v[i].rate;
-
-            if (p->v[i].frac >= 1.0f)
+            if (p->v[i].index >= p->v[i].loop_end)
             {
-              p->v[i].index += step;
-              p->v[i].frac -= 1.0f;
-
-              if (p->v[i].loop_len >= 4 * step)
+              if (p->v[i].swap_sample_flag)
               {
-                if (p->v[i].index >= p->v[i].loop_end)
-                {
-                  if (p->v[i].swap_sample_flag)
-                  {
-                    p->v[i].swap_sample_flag = 0;
+                p->v[i].swap_sample_flag = 0;
 
-                    if (p->v[i].new_loop_len <= 2 * step)
-                    {
-                      p->v[i].data = NULL;
-
-                      continue;
-                    }
-
-                    p->v[i].data = p->v[i].new_data;
-                    p->v[i].len = p->v[i].new_len;
-                    p->v[i].loop_end = p->v[i].new_loop_end;
-                    p->v[i].loop_len = p->v[i].new_loop_len;
-                    step = p->v[i].step = p->v[i].new_step;
-
-                    p->v[i].index = p->v[i].loop_end - p->v[i].loop_len;
-                  }
-                  else
-                  {
-                    p->v[i].index -= p->v[i].loop_len;
-                  }
-                }
-              }
-              else if (p->v[i].index >= p->v[i].len)
-              {
-                if (p->v[i].swap_sample_flag)
-                {
-                  p->v[i].swap_sample_flag = 0;
-
-                  p->v[i].data = p->v[i].new_data;
-                  p->v[i].len = p->v[i].new_len;
-                  p->v[i].loop_end = p->v[i].new_loop_end;
-                  p->v[i].loop_len = p->v[i].new_loop_len;
-                  step = p->v[i].step = p->v[i].new_step;
-                }
-                else
+                if (p->v[i].new_loop_len <= 2 * step)
                 {
                   p->v[i].data = NULL;
+
+                  continue;
                 }
+
+                p->v[i].data = p->v[i].new_data;
+                p->v[i].len = p->v[i].new_len;
+                p->v[i].loop_end = p->v[i].new_loop_end;
+                p->v[i].loop_len = p->v[i].new_loop_len;
+                step = p->v[i].step = p->v[i].new_step;
+
+                p->v[i].index = p->v[i].loop_end - p->v[i].loop_len;
               }
+              else
+              {
+                p->v[i].index -= p->v[i].loop_len;
+              }
+            }
+          }
+          else if (p->v[i].index >= p->v[i].len)
+          {
+            if (p->v[i].swap_sample_flag)
+            {
+              p->v[i].swap_sample_flag = 0;
+
+              p->v[i].data = p->v[i].new_data;
+              p->v[i].len = p->v[i].new_len;
+              p->v[i].loop_end = p->v[i].new_loop_end;
+              p->v[i].loop_len = p->v[i].new_loop_len;
+              step = p->v[i].step = p->v[i].new_step;
+            }
+            else
+            {
+              p->v[i].data = NULL;
             }
           }
         }
