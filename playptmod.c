@@ -1067,11 +1067,14 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     p->source->head.format = FORMAT_STK;
 
   p->source->head.pattern_count = ((bufLength - total_sample_size) -
-    (((p->source->head.format == FORMAT_STK) ? 600 : 1084) - 1)) / (256 * p->source->head.channel_count);
+    ((p->source->head.format == FORMAT_STK) ? 600 : 1084 - 4)) / (256 * p->source->head.channel_count);
 
   for (i = 0; i < 128; i++)
   {
     bufread(&p->source->head.order[i], 1, 1, fModule);
+
+    if (p->source->head.format == FORMAT_FLT8)
+      p->source->head.order[i] >>= 1;
 
     if (p->source->head.order[i] >= p->source->head.pattern_count)
       p->source->head.order[i] = 0;
