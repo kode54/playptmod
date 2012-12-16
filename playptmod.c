@@ -209,7 +209,7 @@ typedef struct player_data
   float vsync_block_length, vsync_samples_left, *mixer_buffer_l, *mixer_buffer_r, *pt_period_freq_tab, *pt_extended_period_freq_tab;
   unsigned char *pt_tab_vibsine;
   int minPeriod, maxPeriod, calculatedMinPeriod, calculatedMaxPeriod;
-  int vsync_timing;
+  int vsync_timing, pattern_counting;
   Voice v[PAULA_CHANNELS];
   Filter filter;
   FilterC filter_c;
@@ -1019,25 +1019,33 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
       p->source->head.order[i] >>= 1;
   }
 
-  bufseek(fModule, 0, SEEK_END);
-  for (i = p->source->head.format == FORMAT_STK ? 14 : 30; i >= 0; i--)
+  if (p->pattern_counting == 0)
   {
-    if (p->source->samples[i].length >= 5)
+    bufseek(fModule, 0, SEEK_END);
+    for (i = p->source->head.format == FORMAT_STK ? 14 : 30; i >= 0; i--)
     {
-      j = (p->source->samples[i].length + 1) / 2 + 5 + 16;
-      if (j < p->source->samples[i].length)
+      if (p->source->samples[i].length >= 5)
       {
-        bufseek(fModule, -j, SEEK_CUR);
-        bufread(MK, 1, 5, fModule);
-        if (!memcmp(MK, "ADPCM", 5))
+        j = (p->source->samples[i].length + 1) / 2 + 5 + 16;
+        if (j < p->source->samples[i].length)
         {
-          total_sample_size += j;
-          bufseek(fModule, -5, SEEK_CUR);
+          bufseek(fModule, -j, SEEK_CUR);
+          bufread(MK, 1, 5, fModule);
+          if (!memcmp(MK, "ADPCM", 5))
+          {
+            total_sample_size += j;
+            bufseek(fModule, -5, SEEK_CUR);
+          }
+          else
+          {
+            total_sample_size += p->source->samples[i].length;
+            bufseek(fModule, -(signed long)(p->source->samples[i].length + 5 - j), SEEK_CUR);
+          }
         }
         else
         {
           total_sample_size += p->source->samples[i].length;
-          bufseek(fModule, -(signed long)(p->source->samples[i].length + 5 - j), SEEK_CUR);
+          bufseek(fModule, -(signed long)p->source->samples[i].length, SEEK_CUR);
         }
       }
       else
@@ -1046,21 +1054,26 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
         bufseek(fModule, -(signed long)p->source->samples[i].length, SEEK_CUR);
       }
     }
-    else
+    p->source->head.pattern_count = ((bufLength - total_sample_size) -
+      ((p->source->head.format == FORMAT_STK) ? 600 : 1084 - 4)) / (256 * p->source->head.channel_count);
+
+    for (i = 0; i < 128; i++)
     {
-      total_sample_size += p->source->samples[i].length;
-      bufseek(fModule, -(signed long)p->source->samples[i].length, SEEK_CUR);
+      if (p->source->head.order[i] >= p->source->head.pattern_count)
+        p->source->head.order[i] = 0;
     }
   }
-
-  p->source->head.pattern_count = ((bufLength - total_sample_size) -
-    ((p->source->head.format == FORMAT_STK) ? 600 : 1084 - 4)) / (256 * p->source->head.channel_count);
-
-  for (i = 0; i < 128; i++)
+  else if (p->pattern_counting == 1)
   {
-    if (p->source->head.order[i] >= p->source->head.pattern_count)
-      p->source->head.order[i] = 0;
+    p->source->head.pattern_count = 0;
+    for (i = 0; i < p->source->head.order_count; i++)
+    {
+      if (p->source->head.order[i] > p->source->head.pattern_count)
+        p->source->head.pattern_count = p->source->head.order[i];
+    }
+    p->source->head.pattern_count++;
   }
+  else return 0; /* unsupported pattern counting method */
 
   bufseek(fModule, p->source->head.format == FORMAT_STK ? 600 : 1084, SEEK_SET);
 
@@ -2248,6 +2261,7 @@ void * playptmod_Create(int samplingFrequency)
   p->maxPeriod = PT_MAX_PERIOD;
 
   p->vsync_timing = 0;
+  p->pattern_counting = 0;
 
   p->mixerBuffer = (signed char *)calloc(soundBufferSize, 1);
 
@@ -2276,6 +2290,10 @@ void playptmod_Config(void *_p, int option, int value)
 
   case PTMOD_OPTION_VSYNC_TIMING:
     p->vsync_timing = value;
+    break;
+
+  case PTMOD_OPTION_PATTERN_COUNT:
+    p->pattern_counting = value;
     break;
   }
 }

@@ -8,7 +8,19 @@ extern "C" {
 void * playptmod_Create(int samplingFrequency);
 
 #define PTMOD_OPTION_CLAMP_PERIODS 0
+/* 1 (default) = Amiga / Protracker range
+ * 0           = MSDOS / MTM / extended range */
+
 #define PTMOD_OPTION_VSYNC_TIMING  1
+/* 0 (default) = Speed command 20 or higher sets tempo
+ * 1           = Speed command always sets speed */
+
+#define PTMOD_OPTION_PATTERN_COUNT 2
+/* Set before calling Load/LoadMem
+ * 0 (default) = Calculate pattern count from file size remaining after
+ *               subtracting the sample data and the header
+ * 1           = Calculate the pattern count from the highest pattern number
+ *               in the order list */
 
 void playptmod_Config(void *p, int option, int value);
 

@@ -51,6 +51,7 @@ int main(int argc, const char* const* argv)
     player = playptmod_Create(SAMPLE_RATE);
 
     playptmod_Config( player, PTMOD_OPTION_CLAMP_PERIODS, 0 );
+    playptmod_Config( player, PTMOD_OPTION_PATTERN_COUNT, 1 );
 
 	if ( !playptmod_Load(player, argv[1]) ) return 1;
 
