@@ -1066,7 +1066,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
   else if (p->pattern_counting == 1)
   {
     p->source->head.pattern_count = 0;
-    for (i = 0; i < p->source->head.order_count; i++)
+    for (i = 0; i < 128; i++)
     {
       if (p->source->head.order[i] > p->source->head.pattern_count)
         p->source->head.pattern_count = p->source->head.order[i];
