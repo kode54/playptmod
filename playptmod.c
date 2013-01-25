@@ -508,7 +508,7 @@ static void mixer_output_audio(player *p, signed short *target, int samples_to_m
   {
     j = 0;
 
-    if (p->v[i].data)
+    if (p->v[i].data && p->v[i].rate)
     {
       step = p->v[i].step;
       for (j = 0; j < samples_to_mix;)
