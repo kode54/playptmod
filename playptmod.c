@@ -1643,10 +1643,17 @@ static void do_vibrato(player *p, mod_channel *ch)
 
     vib_data = (vib_data * ch->vibratodepth) >> 7;
     if (ch->vibratopos < 128)
+    {
       p->aperiod += (short)vib_data;
+      if (p->aperiod > 907)
+        p->aperiod = 907;
+    }
     else
+    {
       p->aperiod -= (short)vib_data;
-
+      if (p->aperiod < 108)
+        p->aperiod = 108;
+    }
     ch->vibratopos = (ch->vibratopos + ch->vibratospeed) & 0xFF;
   }
 }
