@@ -1645,14 +1645,18 @@ static void do_vibrato(player *p, mod_channel *ch)
     if (ch->vibratopos < 128)
     {
       p->aperiod += (short)vib_data;
-      if (p->aperiod > 907)
+      if (p->minPeriod == PT_MIN_PERIOD && p->aperiod > 907)
         p->aperiod = 907;
+      else if (p->aperiod > p->maxPeriod)
+        p->aperiod = p->maxPeriod;
     }
     else
     {
       p->aperiod -= (short)vib_data;
-      if (p->aperiod < 108)
+      if (p->minPeriod == PT_MIN_PERIOD && p->aperiod < 108)
         p->aperiod = 108;
+      else if (p->aperiod < p->minPeriod)
+        p->aperiod = p->minPeriod;
     }
     ch->vibratopos = (ch->vibratopos + ch->vibratospeed) & 0xFF;
   }
