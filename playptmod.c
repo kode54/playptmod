@@ -979,7 +979,14 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
       if (p->source->samples[i].volume > 64)
         p->source->samples[i].volume = 64;
 
-      p->source->samples[i].loop_start = file_get_word_bigendian(fModule) << 1;
+      if (might_be_an_STK_tune)
+      {
+        p->source->samples[i].loop_start = file_get_word_bigendian(fModule);
+      }
+      else
+      {
+        p->source->samples[i].loop_start = file_get_word_bigendian(fModule) << 1;
+      }
       p->source->samples[i].loop_length = file_get_word_bigendian(fModule) << 1;
 
       if (p->source->samples[i].loop_length < 2)
