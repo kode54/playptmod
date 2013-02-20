@@ -223,7 +223,7 @@ static const unsigned char pt_tab_invloop[16] =
   0x00, 0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0D, 0x0F, 0x13, 0x16, 0x1A, 0x20, 0x2B, 0x40, 0x80
 };
 
-static const short rawPeriodTable[592] =
+static const short rawPeriodTable[640] =
 {
   856,808,762,720,678,640,604,570,538,508,480,453,
   428,404,381,360,339,320,302,285,269,254,240,226,
@@ -272,10 +272,16 @@ static const short rawPeriodTable[592] =
   217,205,193,183,172,163,154,145,137,129,122,115,0,
   862,814,768,725,684,646,610,575,543,513,484,457,
   431,407,384,363,342,323,305,288,272,256,242,228,
-  216,203,192,181,171,161,152,144,136,128,121,114,0
+  216,203,192,181,171,161,152,144,136,128,121,114,0,
+
+  // These are paddings for the arpeggio function..
+  // The arpeggio function attempts to read out of
+  // boundaries at some points (hi_note + hi_finetune + arp)
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
-static short extendedRawPeriodTable[16 * 85];
+static short extendedRawPeriodTable[16 * 85 + 48];
 
 static const short npertab[84] = {
     /* Octaves 6 -> 0 */
@@ -319,6 +325,9 @@ void maketables(player *p, int sound_frequency)
   for (j = 0; j < 16; j++)
     for (i = 0; i < 85; i++)
       extendedRawPeriodTable[(j * 85) + i] = i == 84 ? 0 : npertab[i] * 8363 / finetune[j];
+
+  for (i = 0; i < 48; i++)
+    extendedRawPeriodTable[16 * 85 + i] = 0;
 
   p->calculatedMaxPeriod = maxPeriod = extendedRawPeriodTable[8 * 85];
   p->calculatedMinPeriod = minPeriod = extendedRawPeriodTable[7 * 85 + 83];
