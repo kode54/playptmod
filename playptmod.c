@@ -670,9 +670,10 @@ static void outputAudio(player *p, short *target, int numSamples)
         {
             for (; j < numSamples; ++j)
             {
+                int i_smp;
+
                 tempVolume = (float)p->blepVol[i].last_value;
                 tempSample = (float)p->blep[i].last_value;
-                int i_smp;
 
                 tempVolume += ptm_blip_read_sample(&p->blepVol[i]);
 
