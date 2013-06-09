@@ -1148,7 +1148,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
     for (pattern = 0; pattern < p->source->MAX_PATTERNS; ++pattern)
     {
-        p->source->patterns[pattern] = (modnote_t *)calloc(64 * 4, sizeof (modnote_t));
+        p->source->patterns[pattern] = (modnote_t *)calloc(64 * p->source->head.channelCount, sizeof (modnote_t));
         if (p->source->patterns[pattern] == NULL)
         {
             for (i = 0; i < pattern; ++i)
