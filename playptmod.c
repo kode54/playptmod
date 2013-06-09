@@ -1,15 +1,13 @@
 /*
-** - --=playptmod v0.64 - 8bitbubsy 2010-2012=-- -
-** This is the portable library version, which requires a separate
-** audio output method, to be used in a production zip/rar whatever.
+** - --=playptmod v1.00 - 8bitbubsy 2010-2013=-- -
+** This is the native Win32 API version, no DLL needed in you
+** production zip/rar whatever.
 **
 ** Thanks to mukunda for learning me how to code a .MOD player
 ** some years back!
 **
 ** Thanks to ad_/aciddose/adejr for the BLEP and LED filter
 ** routines.
-**
-** BLEP routines replaced with blargg's blip_buf.c -kode54
 **
 ** Note: There's a lot of weird behavior in the coding to
 ** "emulate" the weird stuff ProTracker on the Amiga does.
@@ -50,7 +48,7 @@
 **
 **			// Make sure to delay a bit here
 **		}
-**		
+**
 **		playptmod_Free(p);
 **
 **		return 0;
@@ -61,67 +59,66 @@
 ** and use some Win32 API functions to copy the MOD
 ** to memory and get a pointer to it. Then you call
 ** playptmod_LoadMem instead.
-** Perfect for those cracktros!
 **
 */
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
 
 #include "playptmod.h"
 
 #include "blip_buf.h"
+
+#include <stdio.h>
+#include <string.h> // memcpy()
+#include <stdlib.h> // malloc(), calloc(), free()
+#include <math.h> // floorf(), sinf()
 
 #define HI_NYBBLE(x) ((x) >> 4)
 #define LO_NYBBLE(x) ((x) & 0x0F)
 #define CLAMP(x, low, high)  (((x) > (high)) ? (high) : (((x) < (low)) ? (low) : (x)))
 #define LERP(I, F) (I[0] + F * (I[1] - I[0]))
 #define DENORMAL_OFFSET 1E-10f
-#define USE_HIGHPASS 1
-#define USE_BLEP 1
 #define ZC 8
 #define OS 5
 #define SP 5
 #define NS (ZC * OS / SP)
 #define RNS 7
-#ifdef FM_PI
-#undef FM_PI
-#endif
-#define FM_PI 3.1415926f
 #define PT_MIN_PERIOD 113
 #define PT_MAX_PERIOD 856
-#define PAULA_CHANNELS 32
+#define MAX_CHANNELS 32
 #define MOD_ROWS 64
 #define MOD_SAMPLES 31
 
-enum
-{
-  FORMAT_MK,     // ProTracker 1.x
-  FORMAT_MK2,    // ProTracker 2.x (if tune has >64 patterns)
-  FORMAT_FLT4,   // StarTrekker
-  FORMAT_FLT8,
-  FORMAT_NCHN,   // FastTracker II (only 1-9 channel MODs)
-  FORMAT_NNCH,   // FastTracker II (10-32 channel MODs)
-  FORMAT_16CN,   // FastTracker II (16 channel MODs)
-  FORMAT_32CN,   // FastTracker II (32 channel MODs)
-  FORMAT_STK,    // The Ultimate SoundTracker (15 samples)
-  FORMAT_NT,     // NoiseTracker 1.0
+#ifndef true
+#define true 1
+#define false 0
+#endif
 
-  FORMAT_MTM,    // MultiTracker
-
-  FORMAT_UNKNOWN
-};
+#ifdef _MSC_VER
+#define inline __forceinline
+#endif
 
 enum
 {
-  FLAG_NOTE = 1,
-  FLAG_SAMPLE = 2,
-  FLAG_NEWSAMPLE = 4,
-  AFLAG_START = 1,
-  AFLAG_DELAY = 2,
-  AFLAG_NEW_SAMPLE = 4
+    FORMAT_MK,     // ProTracker 1.x
+    FORMAT_MK2,    // ProTracker 2.x (if tune has >64 patterns)
+    FORMAT_FLT4,   // StarTrekker
+    FORMAT_FLT8,
+    FORMAT_NCHN,   // FastTracker II (only 1-9 channel MODs)
+    FORMAT_NNCH,   // FastTracker II (10-32 channel MODs)
+    FORMAT_16CN,   // FastTracker II (16 channel MODs)
+    FORMAT_32CN,   // FastTracker II (32 channel MODs)
+    FORMAT_STK,    // The Ultimate SoundTracker (15 samples)
+    FORMAT_NT,     // NoiseTracker 1.0
+
+    FORMAT_MTM,    // MultiTracker
+
+    FORMAT_UNKNOWN,
+
+    FLAG_NOTE = 1,
+    FLAG_SAMPLE = 2,
+    FLAG_NEWSAMPLE = 4,
+    TEMPFLAG_START = 1,
+    TEMPFLAG_DELAY = 2,
+    TEMPFLAG_NEW_SAMPLE = 4
 };
 
 enum
@@ -131,157 +128,240 @@ enum
 
 typedef struct modnote
 {
-  unsigned char sample, command, param;
-  short period;
+    unsigned char sample;
+    unsigned char command;
+    unsigned char param;
+    short period;
 } modnote_t;
 
 typedef struct
 {
-  unsigned char order_count, pattern_count, row_count, restart_pos, order[128], vol[PAULA_CHANNELS], pan[PAULA_CHANNELS], tempo, ticks, format, channel_count;
+    unsigned char orderCount;
+    unsigned char patternCount;
+    unsigned char rowCount;
+    unsigned char restartPos;
+    unsigned char order[128];
+    unsigned char volume[MAX_CHANNELS];
+    unsigned char pan[MAX_CHANNELS];
+    unsigned char ticks;
+    unsigned char format;
+    unsigned char channelCount;
+    short tempo;
+    short initBPM;
+    int moduleSize;
+    int totalSampleSize;
 } MODULE_HEADER;
 
 typedef struct
 {
-  unsigned char volume;
-  signed char finetune;
-  unsigned int loop_start, loop_length, length;
-  unsigned int offset;
-  unsigned char attribute;
+    unsigned char fineTune;
+    unsigned char volume;
+    int loopStart;
+    int loopLength;
+    int length;
+    int tmpLoopStart;
+    int offset;
+    unsigned char attribute;
 } MODULE_SAMPLE;
 
 typedef struct
 {
-  unsigned char seqchannel, flags, aflags, tmp_aflags, finetune;
-  unsigned char tremoloctrl, tremolospeed, tremolodepth;
-  unsigned char vibratoctrl, vibratospeed, vibratodepth;
-  unsigned char glissandoctrl, glissandospeed;
-  unsigned char invloop_delay, invloop_speed;
-  unsigned char sample, command, param;
-  signed char pattern_loop_row, pattern_loop_times, volume;
-  signed short period, tperiod;
-  unsigned int tremolopos, vibratopos, offset, sample_offset_temp, invloop_offset;
-  int no_note, bug_offset_not_added;
+    char patternLoopRow;
+    char patternLoopCounter;
+    char volume;
+    unsigned char sample;
+    unsigned char command;
+    unsigned char param;
+    unsigned char flags;
+    unsigned char tempFlags;
+    unsigned char tempFlagsBackup;
+    unsigned char fineTune;
+    unsigned char tremoloPos;
+    unsigned char vibratoPos;
+    unsigned char tremoloControl;
+    unsigned char tremoloSpeed;
+    unsigned char tremoloDepth;
+    unsigned char vibratoControl;
+    unsigned char vibratoSpeed;
+    unsigned char vibratoDepth;
+    unsigned char glissandoControl;
+    unsigned char glissandoSpeed;
+    unsigned char invertLoopDelay;
+    unsigned char invertLoopSpeed;
+    unsigned char chanIndex;
+    short period;
+    short tempPeriod;
+    int noNote;
+    int invertLoopOffset;
+    int offset;
+    int offsetTemp;
+    int offsetBugNotAdded;
 } mod_channel;
 
 typedef struct
 {
-  unsigned char module_loaded, MAX_PATTERNS;
-  signed char *sample_data, *original_sample_data;
-  int total_sample_size;
-  MODULE_HEADER head;
-  MODULE_SAMPLE samples[256];
-  modnote_t *patterns[256];
-  mod_channel channels[PAULA_CHANNELS];
+    char moduleLoaded;
+    unsigned char MAX_PATTERNS;
+    char *sampleData;
+    char *originalSampleData;
+    MODULE_HEADER head;
+    MODULE_SAMPLE samples[31];
+    modnote_t *patterns[100];
+    mod_channel channels[MAX_CHANNELS];
 } MODULE;
 
 typedef struct paula_filter_state
 {
-  float led[4], high[2];
+    float LED[4];
+    float high[2];
 } Filter;
 
 typedef struct paula_filter_coefficients
 {
-  float led, led_fb, high;
+    float LED;
+    float LEDFb;
+    float high;
 } FilterC;
 
 typedef struct voice_data
 {
-  const signed char *data, *new_data;
-  signed int vol, pan_l, pan_r;
-  int len, loop_len, loop_end;
-  int index, new_len, new_loop_len, new_loop_end, swap_sample_flag;
-  int step, new_step;
-  float rate, frac;
-  int mute;
+    const char *newData;
+    const char *data;
+    int index;
+    int length;
+    int loopLength;
+    int loopEnd;
+    int newLength;
+    int newLoopLength;
+    int newLoopEnd;
+    int swapSampleFlag;
+    int vol;
+    int panL;
+    int panR;
+    int step;
+    int newStep;
+    float frac;
+    float rate;
+    int mute;
 } Voice;
 
-typedef struct player_data
+typedef struct
 {
-  unsigned char mod_speed, mod_bpm, mod_tick, mod_pattern, mod_order, mod_start_order, aflags;
-  unsigned char PBreakPosition, PattDelayTime, PattDelayTime2;
-  signed char *mixerBuffer, mod_row, avolume; /* must be signed */
-  signed short aperiod;
-  int moduleLoaded, modulePlaying, tempoTimerVal, use_led_filter;
-  int soundFrequency, PosJumpAssert, PBreakFlag;
-  unsigned int loop_counter;
-  signed int mod_samplecounter;
-  unsigned int mod_samplespertick;
-  float vsync_block_length, vsync_samples_left, *mixer_buffer_l, *mixer_buffer_r, *pt_period_freq_tab, *pt_extended_period_freq_tab;
-  unsigned char *pt_tab_vibsine;
-  int minPeriod, maxPeriod, calculatedMinPeriod, calculatedMaxPeriod;
-  int vsync_timing, pattern_counting;
-  Voice v[PAULA_CHANNELS];
-  Filter filter;
-  FilterC filter_c;
-  blip_t b[PAULA_CHANNELS], b_vol[PAULA_CHANNELS];
-  unsigned int order_played[256];
-  MODULE *source;
+    unsigned int length;
+    unsigned int remain;
+    const unsigned char *buf;
+    const unsigned char *t_buf;
+} BUF;
+
+typedef struct
+{
+    char pattBreakBugPos;
+    char pattBreakFlag;
+    char pattDelayFlag;
+    char forceEffectsOff;
+    char tempVolume;
+    unsigned char modRow;
+    unsigned char modSpeed;
+    unsigned short modBPM;
+    unsigned char modTick;
+    unsigned char modPattern;
+    unsigned char modOrder;
+    unsigned char tempFlags;
+    unsigned char PBreakPosition;
+    unsigned char PattDelayTime;
+    unsigned char PattDelayTime2;
+    unsigned char PosJumpAssert;
+    unsigned char PBreakFlag;
+    short tempPeriod;
+    int tempoTimerVal;
+    char moduleLoaded;
+    char modulePlaying;
+    char useLEDFilter;
+    unsigned short soundBufferSize;
+    unsigned int soundFrequency;
+    char soundBuffers;
+    float *frequencyTable;
+    float *extendedFrequencyTable;
+    unsigned char *sinusTable;
+    int minPeriod;
+    int maxPeriod;
+    int calculatedMinPeriod;
+    int calculatedMaxPeriod;
+    int loopCounter;
+    int sampleCounter;
+    int samplesPerTick;
+    int vBlankTiming;
+    Voice v[MAX_CHANNELS];
+    Filter filter;
+    FilterC filterC;
+    float *mixBufferL;
+    float *mixBufferR;
+    blip_t blep[MAX_CHANNELS];
+    blip_t blepVol[MAX_CHANNELS];
+    unsigned int orderPlayed[256];
+    MODULE *source;
 } player;
 
-static const unsigned char pt_tab_invloop[16] =
+static const unsigned char invertLoopSpeeds[16] =
 {
-  0x00, 0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0D, 0x0F, 0x13, 0x16, 0x1A, 0x20, 0x2B, 0x40, 0x80
+    0x00, 0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0D, 0x0F, 0x13, 0x16, 0x1A, 0x20, 0x2B, 0x40, 0x80
 };
 
-static const short rawPeriodTable[640] =
+static const short rawAmigaPeriods[640] =
 {
-  856,808,762,720,678,640,604,570,538,508,480,453,
-  428,404,381,360,339,320,302,285,269,254,240,226,
-  214,202,190,180,170,160,151,143,135,127,120,113,0,
-  850,802,757,715,674,637,601,567,535,505,477,450,
-  425,401,379,357,337,318,300,284,268,253,239,225,
-  213,201,189,179,169,159,150,142,134,126,119,113,0,
-  844,796,752,709,670,632,597,563,532,502,474,447,
-  422,398,376,355,335,316,298,282,266,251,237,224,
-  211,199,188,177,167,158,149,141,133,125,118,112,0,
-  838,791,746,704,665,628,592,559,528,498,470,444,
-  419,395,373,352,332,314,296,280,264,249,235,222,
-  209,198,187,176,166,157,148,140,132,125,118,111,0,
-  832,785,741,699,660,623,588,555,524,495,467,441,
-  416,392,370,350,330,312,294,278,262,247,233,220,
-  208,196,185,175,165,156,147,139,131,124,117,110,0,
-  826,779,736,694,655,619,584,551,520,491,463,437,
-  413,390,368,347,328,309,292,276,260,245,232,219,
-  206,195,184,174,164,155,146,138,130,123,116,109,0,
-  820,774,730,689,651,614,580,547,516,487,460,434,
-  410,387,365,345,325,307,290,274,258,244,230,217,
-  205,193,183,172,163,154,145,137,129,122,115,109,0,
-  814,768,725,684,646,610,575,543,513,484,457,431,
-  407,384,363,342,323,305,288,272,256,242,228,216,
-  204,192,181,171,161,152,144,136,128,121,114,108,0,
-  907,856,808,762,720,678,640,604,570,538,508,480,
-  453,428,404,381,360,339,320,302,285,269,254,240,
-  226,214,202,190,180,170,160,151,143,135,127,120,0,
-  900,850,802,757,715,675,636,601,567,535,505,477,
-  450,425,401,379,357,337,318,300,284,268,253,238,
-  225,212,200,189,179,169,159,150,142,134,126,119,0,
-  894,844,796,752,709,670,632,597,563,532,502,474,
-  447,422,398,376,355,335,316,298,282,266,251,237,
-  223,211,199,188,177,167,158,149,141,133,125,118,0,
-  887,838,791,746,704,665,628,592,559,528,498,470,
-  444,419,395,373,352,332,314,296,280,264,249,235,
-  222,209,198,187,176,166,157,148,140,132,125,118,0,
-  881,832,785,741,699,660,623,588,555,524,494,467,
-  441,416,392,370,350,330,312,294,278,262,247,233,
-  220,208,196,185,175,165,156,147,139,131,123,117,0,
-  875,826,779,736,694,655,619,584,551,520,491,463,
-  437,413,390,368,347,328,309,292,276,260,245,232,
-  219,206,195,184,174,164,155,146,138,130,123,116,0,
-  868,820,774,730,689,651,614,580,547,516,487,460,
-  434,410,387,365,345,325,307,290,274,258,244,230,
-  217,205,193,183,172,163,154,145,137,129,122,115,0,
-  862,814,768,725,684,646,610,575,543,513,484,457,
-  431,407,384,363,342,323,305,288,272,256,242,228,
-  216,203,192,181,171,161,152,144,136,128,121,114,0,
-
-  // These are paddings for the arpeggio function..
-  // The arpeggio function attempts to read out of
-  // boundaries at some points (hi_note + hi_finetune + arp)
-  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    856,808,762,720,678,640,604,570,538,508,480,453,
+    428,404,381,360,339,320,302,285,269,254,240,226,
+    214,202,190,180,170,160,151,143,135,127,120,113,0,
+    850,802,757,715,674,637,601,567,535,505,477,450,
+    425,401,379,357,337,318,300,284,268,253,239,225,
+    213,201,189,179,169,159,150,142,134,126,119,113,0,
+    844,796,752,709,670,632,597,563,532,502,474,447,
+    422,398,376,355,335,316,298,282,266,251,237,224,
+    211,199,188,177,167,158,149,141,133,125,118,112,0,
+    838,791,746,704,665,628,592,559,528,498,470,444,
+    419,395,373,352,332,314,296,280,264,249,235,222,
+    209,198,187,176,166,157,148,140,132,125,118,111,0,
+    832,785,741,699,660,623,588,555,524,495,467,441,
+    416,392,370,350,330,312,294,278,262,247,233,220,
+    208,196,185,175,165,156,147,139,131,124,117,110,0,
+    826,779,736,694,655,619,584,551,520,491,463,437,
+    413,390,368,347,328,309,292,276,260,245,232,219,
+    206,195,184,174,164,155,146,138,130,123,116,109,0,
+    820,774,730,689,651,614,580,547,516,487,460,434,
+    410,387,365,345,325,307,290,274,258,244,230,217,
+    205,193,183,172,163,154,145,137,129,122,115,109,0,
+    814,768,725,684,646,610,575,543,513,484,457,431,
+    407,384,363,342,323,305,288,272,256,242,228,216,
+    204,192,181,171,161,152,144,136,128,121,114,108,0,
+    907,856,808,762,720,678,640,604,570,538,508,480,
+    453,428,404,381,360,339,320,302,285,269,254,240,
+    226,214,202,190,180,170,160,151,143,135,127,120,0,
+    900,850,802,757,715,675,636,601,567,535,505,477,
+    450,425,401,379,357,337,318,300,284,268,253,238,
+    225,212,200,189,179,169,159,150,142,134,126,119,0,
+    894,844,796,752,709,670,632,597,563,532,502,474,
+    447,422,398,376,355,335,316,298,282,266,251,237,
+    223,211,199,188,177,167,158,149,141,133,125,118,0,
+    887,838,791,746,704,665,628,592,559,528,498,470,
+    444,419,395,373,352,332,314,296,280,264,249,235,
+    222,209,198,187,176,166,157,148,140,132,125,118,0,
+    881,832,785,741,699,660,623,588,555,524,494,467,
+    441,416,392,370,350,330,312,294,278,262,247,233,
+    220,208,196,185,175,165,156,147,139,131,123,117,0,
+    875,826,779,736,694,655,619,584,551,520,491,463,
+    437,413,390,368,347,328,309,292,276,260,245,232,
+    219,206,195,184,174,164,155,146,138,130,123,116,0,
+    868,820,774,730,689,651,614,580,547,516,487,460,
+    434,410,387,365,345,325,307,290,274,258,244,230,
+    217,205,193,183,172,163,154,145,137,129,122,115,0,
+    862,814,768,725,684,646,610,575,543,513,484,457,
+    431,407,384,363,342,323,305,288,272,256,242,228,
+    216,203,192,181,171,161,152,144,136,128,121,114,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
-static short extendedRawPeriodTable[16 * 85 + 48];
+static short extendedRawPeriods[16 * 85 + 48];
 
 static const short npertab[84] = {
     /* Octaves 6 -> 0 */
@@ -300,2152 +380,2350 @@ static const short finetune[16]={
     7895,7941,7985,8046,8107,8169,8232,8280
 };
 
-void freetables(player *p)
+static float calcRcCoeff(float sampleRate, float cutOffFreq)
 {
-  free(p->pt_tab_vibsine);
-  free(p->pt_period_freq_tab);
-  free(p->pt_extended_period_freq_tab);
+    if (cutOffFreq >= (sampleRate / 2.0f))
+        return (1.0f);
+
+    return ((2.0f * 3.141592f) * cutOffFreq / sampleRate);
 }
-
-void maketables(player *p, int sound_frequency)
-{
-  int i, j;
-  int minPeriod, maxPeriod;
-
-  p->tempoTimerVal = (sound_frequency * 125) / 50;
-
-  p->pt_tab_vibsine = (unsigned char *)malloc(32);
-  for (i = 0; i < 32; i++)
-    p->pt_tab_vibsine[i] = (unsigned char)floorf(sinf((float)i * FM_PI / 32.0f) * 255.0f);
-
-  p->pt_period_freq_tab = (float *)malloc(sizeof (float) * 908);
-  for (i = 108; i <= 907; i++) // 0..107 will never be looked up, junk is OK
-    p->pt_period_freq_tab[i] = (float)sound_frequency / (3546895.0f / (float)i);
-
-  for (j = 0; j < 16; j++)
-    for (i = 0; i < 85; i++)
-      extendedRawPeriodTable[(j * 85) + i] = i == 84 ? 0 : npertab[i] * 8363 / finetune[j];
-
-  for (i = 0; i < 48; i++)
-    extendedRawPeriodTable[16 * 85 + i] = 0;
-
-  p->calculatedMaxPeriod = maxPeriod = extendedRawPeriodTable[8 * 85];
-  p->calculatedMinPeriod = minPeriod = extendedRawPeriodTable[7 * 85 + 83];
-
-  p->pt_extended_period_freq_tab = (float *)malloc(sizeof (float) * (maxPeriod + 1));
-  for (i = minPeriod; i <= maxPeriod; i++)
-    p->pt_extended_period_freq_tab[i] = (float)sound_frequency / (3546895.0f / (float)i);
-}
-
-static inline int period2note(player *p, int finetune, int period)
-{
-  int i;
-  if (p->minPeriod == PT_MIN_PERIOD)
-  {
-    for (i = 0; i < 36; i++)
-    {
-      if (rawPeriodTable[(finetune * 37) + i] <= period)
-      break;
-    }
-  }
-  else
-  {
-    for (i = 0; i < 84; i++)
-    {
-      if (extendedRawPeriodTable[(finetune * 85) + i] <= period)
-        break;
-    }
-  }
-
-  return i;
-}
-
-static float calculate_rc_coefficient(const float sample_rate, const float cutoff_freq)
-{
-  if (cutoff_freq >= (sample_rate / 2.0f))
-    return 1.0f;
-
-  return 2.0f * FM_PI * cutoff_freq / sample_rate;
-}
-
-typedef struct
-{
-  unsigned long length, remain;
-  const unsigned char *t_buf;
-  const unsigned char *buf;
-} BUF;
 
 static BUF *bufopen(const unsigned char *bufToCopy, unsigned int bufferSize)
 {
-  BUF *b = (BUF *)malloc(sizeof (BUF));
+    BUF *b;
 
-  b->t_buf = bufToCopy;
-  b->buf = &bufToCopy[0];
+    b = (BUF *)malloc(sizeof (BUF));
 
-  b->length = bufferSize;
-  b->remain = bufferSize;
+    b->t_buf = bufToCopy;
+    b->buf = bufToCopy;
+    b->length = bufferSize;
+    b->remain = bufferSize;
 
-  return b;
+    return (b);
 }
 
 static void bufclose(BUF *_SrcBuf)
 {
-  free(_SrcBuf);
+    if (_SrcBuf != NULL)
+        free(_SrcBuf);
 }
 
 static void bufread(void *_DstBuf, size_t _ElementSize, size_t _Count, BUF *_SrcBuf)
 {
-  _Count *= _ElementSize;
-  if (_Count > _SrcBuf->remain) _Count = _SrcBuf->remain;
-  _SrcBuf->remain -= _Count;
-  memcpy(_DstBuf, _SrcBuf->buf, _Count);
-  _SrcBuf->buf += _Count;
+    _Count *= _ElementSize;
+    if (_Count > _SrcBuf->remain)
+        _Count = _SrcBuf->remain;
+
+    _SrcBuf->remain -= _Count;
+    memcpy(_DstBuf, _SrcBuf->buf, _Count);
+    _SrcBuf->buf += _Count;
 }
 
-static void bufseek(BUF *_SrcBuf, long _Offset, int _Origin)
+static void bufseek(BUF *_SrcBuf, int _Offset, int _Origin)
 {
-  if (_SrcBuf->buf != NULL)
-  {
-    switch (_Origin)
+    if (_SrcBuf->buf)
     {
-      case SEEK_SET: _SrcBuf->buf = _SrcBuf->t_buf + _Offset; break;
-      case SEEK_CUR: _SrcBuf->buf += _Offset; break;
-      case SEEK_END: _SrcBuf->buf = _SrcBuf->t_buf + _SrcBuf->length + _Offset; break;
-      default: break;
+        switch (_Origin)
+        {
+            case SEEK_SET: _SrcBuf->buf = _SrcBuf->t_buf + _Offset; break;
+            case SEEK_CUR: _SrcBuf->buf += _Offset; break;
+            case SEEK_END: _SrcBuf->buf = _SrcBuf->t_buf + _SrcBuf->length + _Offset; break;
+            default: break;
+        }
+
+        _Offset = _SrcBuf->buf - _SrcBuf->t_buf;
+        _SrcBuf->remain = (unsigned int)(_Offset) > _SrcBuf->length ? 0 : _SrcBuf->length - _Offset;
     }
-    _Offset = _SrcBuf->buf - _SrcBuf->t_buf;
-    _SrcBuf->remain = (unsigned long)(_Offset) > _SrcBuf->length ? 0 : _SrcBuf->length - _Offset;
-  }
 }
 
-static void mixer_change_ch_src(player *p, int ch, const signed char *src, int len, int loop_start, int loop_len, int step)
+static inline int periodToNote(player *p, char finetune, short period)
 {
-  if (src != NULL)
-  {
-    p->v[ch].swap_sample_flag = 1;
+    int i;
 
-    p->v[ch].new_data = src;
-    p->v[ch].new_len = len;
-    p->v[ch].new_loop_len = loop_len;
-    p->v[ch].new_loop_end = loop_len + loop_start;
-    p->v[ch].new_step = step;
-  }
+    if (p->minPeriod == PT_MIN_PERIOD)
+    {
+        for (i = 0; i < 36; ++i)
+        {
+            if (rawAmigaPeriods[(finetune * 37) + i] <= period)
+                break;
+        }
+    }
+    else
+    {
+        for (i = 0; i < 84; i++)
+        {
+          if (extendedRawPeriods[(finetune * 85) + i] <= period)
+            break;
+        }
+    }
+
+    return (i);
 }
 
-static void mixer_set_ch_src(player *p, int ch, const signed char *src, int len, int loop_start, int loop_len, int offset, int step)
+static void mixerSwapChSource(player *p, int ch, const char *src, int length, int loopStart, int loopLength, int step)
 {
-  if (src != NULL)
-  {
-    p->v[ch].swap_sample_flag = 0;
+    p->v[ch].swapSampleFlag = true;
+    p->v[ch].newData = src;
+    p->v[ch].newLength = length;
+    p->v[ch].newLoopLength = loopLength;
+    p->v[ch].newLoopEnd = loopLength + loopStart;
+    p->v[ch].newStep = step;
+}
+
+static void mixerSetChSource(player *p, int ch, const char *src, int length, int loopStart, int loopLength, int offset, int step)
+{
+    p->v[ch].swapSampleFlag = false;
     p->v[ch].data = src;
-    p->v[ch].len = len;
+    p->v[ch].length = length;
     p->v[ch].index = offset;
     p->v[ch].frac = 0.0f;
-    p->v[ch].loop_end = loop_start + loop_len;
-    p->v[ch].loop_len = loop_len;
+    p->v[ch].loopEnd = loopStart + loopLength;
+    p->v[ch].loopLength = loopLength;
     p->v[ch].step = step;
 
     if (p->v[ch].index > 0)
     {
-      if (p->v[ch].loop_len >= 4)
-      {
-        if (p->v[ch].index >= p->v[ch].loop_end)
-          p->v[ch].index = 0;
-      }
-      else if (p->v[ch].index >= p->v[ch].len)
-      {
-        p->v[ch].data = NULL;
-      }
-    }
-  }
-}
-
-static void mixer_set_ch_pan(player *p, int ch, int pan)
-{
-  p->v[ch].pan_l = 255 - pan;
-  p->v[ch].pan_r = pan;
-}
-
-static void mixer_set_ch_vol(player *p, int ch, int vol)
-{
-  p->v[ch].vol = vol;
-}
-
-static void mixer_cut_channels(player *p)
-{
-  int i;
-
-  memset(p->v, 0, sizeof (p->v));
-  for (i = 0; i < PAULA_CHANNELS; i++)
-  {
-    ptm_blip_clear(&p->b[i]);
-    ptm_blip_clear(&p->b_vol[i]);
-  }
-  memset(&p->filter, 0, sizeof (p->filter));
-
-  p->vsync_samples_left = 0.0f;
-
-  if (p->source)
-    for (i = 0; i < PAULA_CHANNELS; i++)
-    {
-      mixer_set_ch_vol(p, i, p->source->head.vol[i]);
-      mixer_set_ch_pan(p, i, p->source->head.pan[i]);
-    }
-  else
-    for (i = 0; i < PAULA_CHANNELS; i++)
-    {
-      mixer_set_ch_vol(p, i, 64);
-      mixer_set_ch_pan(p, i, (i + 1) & 2 ? 160 : 96);
+        if (p->v[ch].loopLength > 2)
+        {
+            if (p->v[ch].index >= p->v[ch].loopEnd)
+                p->v[ch].index = 0;
+        }
+        else if (p->v[ch].index >= p->v[ch].length)
+        {
+            p->v[ch].data = NULL;
+        }
     }
 }
 
-static void mixer_set_ch_freq(player *p, int ch, float rate)
+static void mixerSetChPan(player *p, int ch, int pan)
 {
-  p->v[ch].rate = rate;
+    p->v[ch].panL = 256 - pan;
+    p->v[ch].panR = pan;
 }
 
-static void mixer_output_audio(player *p, signed short *target, int samples_to_mix)
+static void mixerSetChVol(player *p, int ch, int vol)
 {
-  int i, j;
-  int step;
-  signed short *out;
+    p->v[ch].vol = vol;
+}
 
-  memset(p->mixer_buffer_l, 0, sizeof (float) * samples_to_mix);
-  memset(p->mixer_buffer_r, 0, sizeof (float) * samples_to_mix);
+static void mixerCutChannels(player *p)
+{
+    int i;
 
-  for (i = 0; i < p->source->head.channel_count; i++)
-  {
-    j = 0;
-
-    if (p->v[i].data && p->v[i].rate)
+    memset(p->v, 0, sizeof (p->v));
+    for (i = 0; i < MAX_CHANNELS; i++)
     {
-      step = p->v[i].step;
-      for (j = 0; j < samples_to_mix;)
-      {
-        signed short t_s = (p->v[i].data ? (step == 2 ? (p->v[i].data[p->v[i].index] + p->v[i].data[p->v[i].index + 1] * 0x100) : p->v[i].data[p->v[i].index] * 0x100) : 0);
-        signed int t_v = (p->v[i].data && !p->v[i].mute ? p->v[i].vol : 0);
+        ptm_blip_clear(&p->blep[i]);
+        ptm_blip_clear(&p->blepVol[i]);
+    }
+    memset(&p->filter, 0, sizeof (p->filter));
 
-        while (j < samples_to_mix && (!p->v[i].data || p->v[i].frac >= 1.0f))
+    if (p->source)
+        for (i = 0; i < MAX_CHANNELS; i++)
         {
-          float t_vol = 0.0f;
-          float t_smp = 0.0f;
-          signed int i_smp;
-
-          if (p->v[i].data)
-            p->v[i].frac -= 1.0f;
-
-          t_vol += ptm_blip_read_sample(&p->b_vol[i]);
-
-          t_smp += ptm_blip_read_sample(&p->b[i]);
-
-          t_smp *= t_vol;
-          i_smp = (signed int)t_smp;
-
-          p->mixer_buffer_l[j] += i_smp * p->v[i].pan_l;
-          p->mixer_buffer_r[j] += i_smp * p->v[i].pan_r;
-
-          j++;
+            mixerSetChVol(p, i, p->source->head.volume[i]);
+            mixerSetChPan(p, i, p->source->head.pan[i]);
         }
-
-        if (j >= samples_to_mix) break;
-
-        if (t_s != p->b[i].last_value)
+    else
+        for (i = 0; i < MAX_CHANNELS; i++)
         {
-          float delta = (float)(t_s - p->b[i].last_value);
-          p->b[i].last_value = t_s;
-          ptm_blip_add_delta(&p->b[i], p->v[i].frac, delta);
+            mixerSetChVol(p, i, 64);
+            mixerSetChPan(p, i, (i + 1) & 2 ? 160 : 96);
         }
+}
 
-        if (t_v != p->b_vol[i].last_value)
+static void mixerSetChRate(player *p, int ch, float rate)
+{
+    p->v[ch].rate = rate;
+}
+
+static void outputAudio(player *p, short *target, int numSamples)
+{
+    short *out;
+    int i;
+    int j;
+    int step;
+    short tempSample;
+    int tempVolume;
+    float L;
+    float R;
+
+    memset(p->mixBufferL, 0, numSamples * sizeof (float));
+    memset(p->mixBufferR, 0, numSamples * sizeof (float));
+
+    for (i = 0; i < p->source->head.channelCount; ++i)
+    {
+        j = 0;
+
+        if (p->v[i].data && p->v[i].rate)
         {
-          float delta = (float)(t_v - p->b_vol[i].last_value);
-          p->b_vol[i].last_value = t_v;
-          ptm_blip_add_delta(&p->b_vol[i], 0, delta);
-        }
-
-        if (p->v[i].data)
-        {
-          p->v[i].index += step;
-          p->v[i].frac += p->v[i].rate;
-
-          if (p->v[i].loop_len >= 4 * step)
-          {
-            if (p->v[i].index >= p->v[i].loop_end)
+            step = p->v[i].step;
+            for (j = 0; j < numSamples;)
             {
-              if (p->v[i].swap_sample_flag)
-              {
-                p->v[i].swap_sample_flag = 0;
+                tempSample = (p->v[i].data ? (step == 2 ? (p->v[i].data[p->v[i].index] + p->v[i].data[p->v[i].index + 1] * 0x100) : p->v[i].data[p->v[i].index] * 0x100) : 0);
+                tempVolume = (p->v[i].data && !p->v[i].mute ? p->v[i].vol : 0);
 
-                if (p->v[i].new_loop_len <= 2 * step)
+                while (j < numSamples && (!p->v[i].data || p->v[i].frac >= 1.0f))
                 {
-                  p->v[i].data = NULL;
+                    float t_vol = 0.0f;
+                    float t_smp = 0.0f;
+                    signed int i_smp;
 
-                  continue;
+                    if (p->v[i].data)
+                        p->v[i].frac -= 1.0f;
+
+                    t_vol += ptm_blip_read_sample(&p->blepVol[i]);
+
+                    t_smp += ptm_blip_read_sample(&p->blep[i]);
+
+                    t_smp *= t_vol;
+                    i_smp = (signed int)t_smp;
+
+                    p->mixBufferL[j] += i_smp * p->v[i].panL;
+                    p->mixBufferR[j] += i_smp * p->v[i].panR;
+
+                    j++;
                 }
 
-                p->v[i].data = p->v[i].new_data;
-                p->v[i].len = p->v[i].new_len;
-                p->v[i].loop_end = p->v[i].new_loop_end;
-                p->v[i].loop_len = p->v[i].new_loop_len;
-                step = p->v[i].step = p->v[i].new_step;
+                if (j >= numSamples) break;
 
-                p->v[i].index = p->v[i].loop_end - p->v[i].loop_len;
-              }
-              else
-              {
-                p->v[i].index -= p->v[i].loop_len;
-              }
-            }
-          }
-          else if (p->v[i].index >= p->v[i].len)
-          {
-            if (p->v[i].swap_sample_flag)
-            {
-              p->v[i].swap_sample_flag = 0;
+                if (tempSample != p->blep[i].last_value)
+                {
+                    float delta = (float)(tempSample - p->blep[i].last_value);
+                    p->blep[i].last_value = tempSample;
+                    ptm_blip_add_delta(&p->blep[i], p->v[i].frac, delta);
+                }
 
-              p->v[i].data = p->v[i].new_data;
-              p->v[i].len = p->v[i].new_len;
-              p->v[i].loop_end = p->v[i].new_loop_end;
-              p->v[i].loop_len = p->v[i].new_loop_len;
-              step = p->v[i].step = p->v[i].new_step;
+                if (tempVolume != p->blepVol[i].last_value)
+                {
+                    float delta = (float)(tempVolume - p->blepVol[i].last_value);
+                    p->blepVol[i].last_value = tempVolume;
+                    ptm_blip_add_delta(&p->blepVol[i], 0, delta);
+                }
+
+                if (p->v[i].data)
+                {
+                    p->v[i].index += step;
+                    p->v[i].frac += p->v[i].rate;
+
+                    if (p->v[i].loopLength >= 4 * step)
+                    {
+                        if (p->v[i].index >= p->v[i].loopEnd)
+                        {
+                            if (p->v[i].swapSampleFlag == true)
+                            {
+                                p->v[i].swapSampleFlag = false;
+
+                                if (p->v[i].newLoopLength <= 2 * step)
+                                {
+                                    p->v[i].data = NULL;
+
+                                    continue;
+                                }
+
+                                p->v[i].data = p->v[i].newData;
+                                p->v[i].length = p->v[i].newLength;
+                                p->v[i].loopEnd = p->v[i].newLoopEnd;
+                                p->v[i].loopLength = p->v[i].newLoopLength;
+                                step = p->v[i].step = p->v[i].newStep;
+
+                                p->v[i].index = p->v[i].loopEnd - p->v[i].loopLength;
+                            }
+                            else
+                            {
+                                p->v[i].index -= p->v[i].loopLength;
+                            }
+                        }
+                    }
+                    else if (p->v[i].index >= p->v[i].length)
+                    {
+                        if (p->v[i].swapSampleFlag == true)
+                        {
+                            p->v[i].swapSampleFlag = false;
+
+                            p->v[i].data = p->v[i].newData;
+                            p->v[i].length = p->v[i].newLength;
+                            p->v[i].loopEnd = p->v[i].newLoopEnd;
+                            p->v[i].loopLength = p->v[i].newLoopLength;
+                            step = p->v[i].step = p->v[i].newStep;
+                        }
+                        else
+                        {
+                            p->v[i].data = NULL;
+                        }
+                    }
+                }
             }
-            else
-            {
-              p->v[i].data = NULL;
-            }
-          }
         }
-      }
-    }
-    else if (p->v[i].swap_sample_flag)
-    {
-      p->v[i].swap_sample_flag = 0;
-
-      p->v[i].data = p->v[i].new_data;
-      p->v[i].len = p->v[i].new_len;
-      p->v[i].loop_end = p->v[i].new_loop_end;
-      p->v[i].loop_len = p->v[i].new_loop_len;
-      p->v[i].step = p->v[i].new_step;
-    }
-
-    if ((j < samples_to_mix) && (p->v[i].data == NULL))
-    {
-      for (; j < samples_to_mix; j++)
-      {
-        float t_vol = (float)p->b_vol[i].last_value;
-        float t_smp = (float)p->b[i].last_value;
-        signed int i_smp;
-
-        t_vol += ptm_blip_read_sample(&p->b_vol[i]);
-
-        t_smp += ptm_blip_read_sample(&p->b[i]);
-
-        t_smp *= t_vol;
-        i_smp = (signed int)t_smp;
-
-        p->mixer_buffer_l[j] += i_smp * p->v[i].pan_l;
-        p->mixer_buffer_r[j] += i_smp * p->v[i].pan_r;
-      }
-    }
-  }
-
-  out = target;
-
-  {
-    static const float downscale = 1.0f / (96.0f * 256.0f);
-
-    for (i = 0; i < samples_to_mix; i++)
-    {
-      float L = p->mixer_buffer_l[i];
-      float R = p->mixer_buffer_r[i];
-
-      if (p->use_led_filter)
-      {
-        p->filter.led[0] += p->filter_c.led * (L - p->filter.led[0])
-          + p->filter_c.led_fb * (p->filter.led[0] - p->filter.led[1]) + DENORMAL_OFFSET;
-        p->filter.led[1] += p->filter_c.led * (p->filter.led[0] - p->filter.led[1]) + DENORMAL_OFFSET;
-
-        p->filter.led[2] += p->filter_c.led * (R - p->filter.led[2])
-          + p->filter_c.led_fb * (p->filter.led[2] - p->filter.led[3]) + DENORMAL_OFFSET;
-        p->filter.led[3] += p->filter_c.led * (p->filter.led[2] - p->filter.led[3]) + DENORMAL_OFFSET;
-
-        L = p->filter.led[1];
-        R = p->filter.led[3];
-      }
-
-      L -= p->filter.high[0];
-      R -= p->filter.high[1];
-
-      p->filter.high[0] += p->filter_c.high * L + DENORMAL_OFFSET;
-      p->filter.high[1] += p->filter_c.high * R + DENORMAL_OFFSET;
-
-      *out++ = (signed int)CLAMP(L * downscale, -32768, 32767);
-      *out++ = (signed int)CLAMP(R * downscale, -32768, 32767);
-    }
-  }
-}
-
-static unsigned short file_get_word_bigendian(BUF *in)
-{
-  unsigned char bytes[2];
-  bufread(bytes, 1, 2, in);
-
-  return (bytes[0] << 8) | bytes[1];
-}
-
-static unsigned short file_get_word_littleendian(BUF *in)
-{
-  unsigned char bytes[2];
-  bufread(bytes, 1, 2, in);
-
-  return (bytes[1] << 8) | bytes[0];
-}
-
-static unsigned int file_get_dword_littleendian(BUF *in)
-{
-  unsigned char bytes[4];
-  bufread(bytes, 1, 4, in);
-
-  return (bytes[3] << 24) | (bytes[2] << 16) | (bytes[1] << 8) | bytes[0];
-}
-
-static int playptmod_LoadMTM(player *p, BUF *fModule)
-{
-  int i, j, k;
-  unsigned int track_count, comment_length;
-  unsigned char sample_count;
-  unsigned long tracks_offset, sequences_offset, comment_offset;
-
-  unsigned int total_sample_size = 0, sample_offset = 0;
-
-  modnote_t *note = NULL;
-
-  bufseek(fModule, 24, SEEK_SET);
-
-  track_count = file_get_word_littleendian(fModule);
-  bufread(&p->source->head.pattern_count, 1, 1, fModule); p->source->head.pattern_count++;
-  bufread(&p->source->head.order_count, 1, 1, fModule); p->source->head.order_count++;
-  comment_length = file_get_word_littleendian(fModule);
-  bufread(&sample_count, 1, 1, fModule);
-  bufseek(fModule, 1, SEEK_CUR);
-  bufread(&p->source->head.row_count, 1, 1, fModule);
-  bufread(&p->source->head.channel_count, 1, 1, fModule);
-
-  if (!track_count || !sample_count || !p->source->head.row_count || p->source->head.row_count > 64 || !p->source->head.channel_count || p->source->head.channel_count > 32)
-    return 0;
-
-  bufread(&p->source->head.pan, 1, 32, fModule);
-
-  for (i = 0; i < 32; i++)
-  {
-    if (p->source->head.pan[i] <= 15)
-    {
-      p->source->head.pan[i] -= (p->source->head.pan[i] & 8) / 8;
-      p->source->head.pan[i] = (((int)p->source->head.pan[i]) * 255) / 14;
-      p->source->head.vol[i] = 64;
-    }
-    else
-    {
-      p->source->head.pan[i] = 128;
-      p->source->head.vol[i] = 0;
-    }
-  }
-
-  for (i = 0; i < sample_count; i++)
-  {
-      bufseek(fModule, 22, SEEK_CUR);
-
-      p->source->samples[i].length = file_get_dword_littleendian(fModule);
-      p->source->samples[i].loop_start = file_get_dword_littleendian(fModule);
-      p->source->samples[i].loop_length = file_get_dword_littleendian(fModule) - p->source->samples[i].loop_start;
-      if (p->source->samples[i].loop_length < 2)
-        p->source->samples[i].loop_length = 2;
-
-      bufread(&p->source->samples[i].finetune, 1, 1, fModule);
-      p->source->samples[i].finetune = LO_NYBBLE(p->source->samples[i].finetune);
-
-      bufread(&p->source->samples[i].volume, 1, 1, fModule);
-
-      bufread(&p->source->samples[i].attribute, 1, 1, fModule);
-
-      total_sample_size += p->source->samples[i].length;
-  }
-
-  bufread(&p->source->head.order, 1, 128, fModule);
-
-  tracks_offset = fModule->length - fModule->remain;
-  sequences_offset = tracks_offset + 192 * track_count;
-  comment_offset = sequences_offset + 64 * p->source->head.pattern_count;
-
-  for (i = 0; i < p->source->head.pattern_count; i++)
-  {
-    note = p->source->patterns[i] = (modnote_t *)calloc(1, sizeof (modnote_t) * p->source->head.row_count * p->source->head.channel_count);
-    if (!note)
-    {
-      for (j = 0; j < i; j++)
-      {
-        if (p->source->patterns[j])
+        else if (p->v[i].swapSampleFlag == true)
         {
-          free(p->source->patterns[j]);
-          p->source->patterns[j] = NULL;
+            p->v[i].swapSampleFlag = false;
+
+            p->v[i].data = p->v[i].newData;
+            p->v[i].length = p->v[i].newLength;
+            p->v[i].loopEnd = p->v[i].newLoopEnd;
+            p->v[i].loopLength = p->v[i].newLoopLength;
+            p->v[i].step = p->v[i].newStep;
         }
-      }
-      return 0;
-    }
-    for (j = 0; j < p->source->head.channel_count; j++)
-    {
-      int track_number;
-      bufseek(fModule, sequences_offset + 64 * i + 2 * j, SEEK_SET);
-      track_number = file_get_word_littleendian(fModule);
-      if (track_number--)
-      {
-        bufseek(fModule, tracks_offset + 192 * track_number, SEEK_SET);
-        for (k = 0; k < p->source->head.row_count; k++)
+
+        if ((j < numSamples) && (p->v[i].data == NULL))
         {
-          unsigned char buf[3];
-          bufread(buf, 1, 3, fModule);
-          if (buf[0] || buf[1] || buf[2])
-          {
-            note[k * p->source->head.channel_count + j].period = (buf[0] / 4) ? extendedRawPeriodTable[buf[0] / 4] : 0;
-            note[k * p->source->head.channel_count + j].sample = ((buf[0] << 4) + (buf[1] >> 4)) & 0x3f;
-            note[k * p->source->head.channel_count + j].command = buf[1] & 0xf;
-            note[k * p->source->head.channel_count + j].param = buf[2];
-            if (note[k * p->source->head.channel_count + j].command == 0xf && note[k * p->source->head.channel_count + j].param == 0x00)
-              note[k * p->source->head.channel_count + j].command = 0;
-          }
+            for (; j < numSamples; ++j)
+            {
+                tempVolume = (float)p->blepVol[i].last_value;
+                tempSample = (float)p->blep[i].last_value;
+                int i_smp;
+
+                tempVolume += ptm_blip_read_sample(&p->blepVol[i]);
+
+                tempSample += ptm_blip_read_sample(&p->blep[i]);
+
+                tempSample *= tempVolume;
+                i_smp = (signed int)tempSample;
+
+                p->mixBufferL[j] += i_smp * p->v[i].panL;
+                p->mixBufferR[j] += i_smp * p->v[i].panR;
+            }
         }
-      }
     }
-  }
 
-  p->source->sample_data = (signed char *)malloc(total_sample_size);
-  if (!p->source->sample_data)
-  {
-    for (i = 0; i < 128; i++)
+    out = target;
+
     {
-      if (p->source->patterns[i] != NULL)
-      {
-        free(p->source->patterns[i]);
-        p->source->patterns[i] = NULL;
-      }
+        static const float downscale = 1.0f / (96.0f * 256.0f);
+
+        for (i = 0; i < numSamples; ++i)
+        {
+            L = p->mixBufferL[i];
+            R = p->mixBufferR[i];
+
+            if (p->useLEDFilter == true)
+            {
+                p->filter.LED[0] += (p->filterC.LED * (L - p->filter.LED[0])
+                    + p->filterC.LEDFb * (p->filter.LED[0] - p->filter.LED[1]) + DENORMAL_OFFSET);
+                p->filter.LED[1] += (p->filterC.LED * (p->filter.LED[0] - p->filter.LED[1]) + DENORMAL_OFFSET);
+                p->filter.LED[2] += (p->filterC.LED * (R - p->filter.LED[2])
+                    + p->filterC.LEDFb * (p->filter.LED[2] - p->filter.LED[3]) + DENORMAL_OFFSET);
+                p->filter.LED[3] += (p->filterC.LED * (p->filter.LED[2] - p->filter.LED[3]) + DENORMAL_OFFSET);
+
+                L = p->filter.LED[1];
+                R = p->filter.LED[3];
+            }
+
+            L -= p->filter.high[0];
+            R -= p->filter.high[1];
+
+            p->filter.high[0] += (p->filterC.high * L + DENORMAL_OFFSET);
+            p->filter.high[1] += (p->filterC.high * R + DENORMAL_OFFSET);
+
+            L *= downscale;
+            R *= downscale;
+
+            L = CLAMP(L, -32768.0f, 32767.0f);
+            R = CLAMP(R, -32768.0f, 32767.0f);
+
+            *out++ = (short)(int)(L);
+            *out++ = (short)(int)(R);
+        }
     }
-
-    return 0;
-  }
-
-  bufseek(fModule, comment_offset + comment_length, SEEK_SET);
-
-  for (i = 0; i < sample_count; i++)
-  {
-    p->source->samples[i].offset = sample_offset;
-    bufread(&p->source->sample_data[sample_offset], 1, p->source->samples[i].length, fModule);
-    if (!(p->source->samples[i].attribute & 1))
-      for (j = (int)sample_offset; (unsigned int)j < sample_offset + p->source->samples[i].length; j++)
-        p->source->sample_data[(unsigned int)j] ^= 0x80;
-    sample_offset += p->source->samples[i].length;
-  }
-
-  p->source->original_sample_data = (signed char *)malloc(total_sample_size);
-  if (p->source->original_sample_data == NULL)
-  {
-    free(p->source->sample_data);
-    p->source->sample_data = NULL;
-
-    for (i = 0; i < 128; i++)
-    {
-      if (p->source->patterns[i] != NULL)
-      {
-        free(p->source->patterns[i]);
-        p->source->patterns[i] = NULL;
-      }
-    }
-
-    return 0;
-  }
-
-  memcpy(p->source->original_sample_data, p->source->sample_data, total_sample_size);
-  p->source->total_sample_size = total_sample_size;
-
-  p->use_led_filter = 0;
-  p->moduleLoaded = 1;
-
-  return 1;
-
 }
 
-static void check_mod_tag(MODULE_HEADER *h, const char *buf)
+static unsigned short bufGetWordBigEndian(BUF *in)
 {
-  if (!strncmp(buf, "M.K.", 4))
-  {
-    h->format = FORMAT_MK; // ProTracker v1.x
-    h->channel_count = 4;
-    return;
-  }
-  else if (!strncmp(buf, "M!K!", 4))
-  {
-    h->format = FORMAT_MK2; // ProTracker v2.x (if >64 patterns)
-    h->channel_count = 4;
-    return;
-  }
-  else if (!strncmp(buf, "FLT4", 4))
-  {
-    h->format = FORMAT_FLT4; // StarTrekker (4 channel MODs only)
-    h->channel_count = 4;
-    return;
-  }
-  else if (!strncmp(buf, "FLT8", 4))
-  {
-    h->format = FORMAT_FLT8;
-    h->channel_count = 8;
-    return;
-  }
-  else if (!strncmp(buf + 1, "CHN", 3) && buf[0] >= '1' && buf[0] <= '9')
-  {
-    h->format = FORMAT_NCHN; // FastTracker II (1-9 channel MODs)
-    h->channel_count = buf[0] - '0';
-    return;
-  }
-  else if (!strncmp(buf + 2, "CH", 2) && buf[0] >= '1' && buf[0] <= '3' && buf[1] >= '0' && buf[1] <= '9')
-  {
-    h->format = FORMAT_NNCH; // FastTracker II (10-32 channel MODs);
-    h->channel_count = (buf[0] - '0') * 10 + (buf[1] - '0');
-    if (h->channel_count > 32)
-    {
-      h->format = FORMAT_UNKNOWN;
-      h->channel_count = 4;
-    }
-    return;
-  }
-  else if (!strncmp(buf, "16CN", 4))
-  {
-    h->format = FORMAT_16CN;
-    h->channel_count = 16;
-    return;
-  }
-  else if (!strncmp(buf, "32CN", 4))
-  {
-    h->format = FORMAT_32CN;
-    h->channel_count = 32;
-    return;
-  }
-  else if (!strncmp(buf, "N.T.", 4))
-  {
-    h->format = FORMAT_MK; // NoiseTracker 1.0, same as ProTracker v1.x (?)
-    h->channel_count = 4;
-    return;
-  }
+    unsigned char bytes[2];
 
-  h->format = FORMAT_UNKNOWN; // May be The Ultimate SoundTracker, 15 samples
-  h->channel_count = 4;
+    bufread(bytes, 1, 2, in);
+    return ((bytes[0] << 8) | bytes[1]);
+}
+
+static unsigned short bufGetWordLittleEndian(BUF *in)
+{
+    unsigned char bytes[2];
+
+    bufread(bytes, 1, 2, in);
+    return ((bytes[1] << 8) | bytes[0]);
+}
+
+static unsigned int bufGetDwordLittleEndian(BUF *in)
+{
+    unsigned char bytes[4];
+
+    bufread(bytes, 1, 4, in);
+    return ((bytes[3] << 24) | (bytes[2] << 16) | (bytes[1] << 8) | bytes[0]);
+}
+
+static int playptmod_LoadMTM(player *p, BUF *fmodule)
+{
+    int i, j, k;
+    unsigned int trackCount, commentLength;
+    unsigned char sampleCount;
+    unsigned long tracksOffset, sequencesOffset, commentOffset;
+
+    unsigned int totalSampleSize = 0, sampleOffset = 0;
+
+    modnote_t *note = NULL;
+
+    bufseek(fmodule, 24, SEEK_SET);
+
+    trackCount = bufGetWordLittleEndian(fmodule);
+    bufread(&p->source->head.patternCount, 1, 1, fmodule); p->source->head.patternCount++;
+    bufread(&p->source->head.orderCount, 1, 1, fmodule); p->source->head.orderCount++;
+    commentLength = bufGetWordLittleEndian(fmodule);
+    bufread(&sampleCount, 1, 1, fmodule);
+    bufseek(fmodule, 1, SEEK_CUR);
+    bufread(&p->source->head.rowCount, 1, 1, fmodule);
+    bufread(&p->source->head.channelCount, 1, 1, fmodule);
+
+    if (!trackCount || !sampleCount || !p->source->head.rowCount || p->source->head.rowCount > 64 || !p->source->head.channelCount || p->source->head.channelCount > 32)
+        return (false);
+
+    bufread(&p->source->head.pan, 1, 32, fmodule);
+
+    for (i = 0; i < 32; i++)
+    {
+        if (p->source->head.pan[i] <= 15)
+        {
+            p->source->head.pan[i] -= (p->source->head.pan[i] & 8) / 8;
+            p->source->head.pan[i] = (((int)p->source->head.pan[i]) * 255) / 14;
+            p->source->head.volume[i] = 64;
+        }
+        else
+        {
+            p->source->head.pan[i] = 128;
+            p->source->head.volume[i] = 0;
+        }
+    }
+
+    for (i = 0; i < sampleCount; i++)
+    {
+        bufseek(fmodule, 22, SEEK_CUR);
+
+        p->source->samples[i].length = bufGetDwordLittleEndian(fmodule);
+        p->source->samples[i].loopStart = bufGetDwordLittleEndian(fmodule);
+        p->source->samples[i].loopLength = bufGetDwordLittleEndian(fmodule) - p->source->samples[i].loopStart;
+        if (p->source->samples[i].loopLength < 2)
+            p->source->samples[i].loopLength = 2;
+
+        bufread(&p->source->samples[i].fineTune, 1, 1, fmodule);
+        p->source->samples[i].fineTune = p->source->samples[i].fineTune & 0x0F;
+
+        bufread(&p->source->samples[i].volume, 1, 1, fmodule);
+
+        bufread(&p->source->samples[i].attribute, 1, 1, fmodule);
+
+        totalSampleSize += p->source->samples[i].length;
+    }
+
+    bufread(&p->source->head.order, 1, 128, fmodule);
+
+    tracksOffset = fmodule->length - fmodule->remain;
+    sequencesOffset = tracksOffset + 192 * trackCount;
+    commentOffset = sequencesOffset + 64 * p->source->head.patternCount;
+
+    for (i = 0; i < p->source->head.patternCount; ++i)
+    {
+        note = p->source->patterns[i] = (modnote_t *)calloc(1, sizeof (modnote_t) * p->source->head.rowCount * p->source->head.channelCount);
+        if (!note)
+        {
+            for (j = 0; j < i; ++j)
+            {
+                if (p->source->patterns[j])
+                {
+                    free(p->source->patterns[j]);
+                    p->source->patterns[j] = NULL;
+                }
+            }
+            return 0;
+        }
+        for (j = 0; j < p->source->head.channelCount; ++j)
+        {
+            int trackNumber;
+            bufseek(fmodule, sequencesOffset + 64 * i + 2 * j, SEEK_SET);
+            trackNumber = bufGetWordLittleEndian(fmodule);
+            if (trackNumber--)
+            {
+                bufseek(fmodule, tracksOffset + 192 * trackNumber, SEEK_SET);
+                for (k = 0; k < p->source->head.rowCount; ++k)
+                {
+                    unsigned char buf[3];
+                    bufread(buf, 1, 3, fmodule);
+                    if (buf[0] || buf[1] || buf[2])
+                    {
+                        note[k * p->source->head.channelCount + j].period = (buf[0] / 4) ? extendedRawPeriods[buf[0] / 4] : 0;
+                        note[k * p->source->head.channelCount + j].sample = ((buf[0] << 4) + (buf[1] >> 4)) & 0x3f;
+                        note[k * p->source->head.channelCount + j].command = buf[1] & 0xf;
+                        note[k * p->source->head.channelCount + j].param = buf[2];
+                        if (note[k * p->source->head.channelCount + j].command == 0xf && note[k * p->source->head.channelCount + j].param == 0x00)
+                            note[k * p->source->head.channelCount + j].command = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    p->source->sampleData = (char *)malloc(totalSampleSize);
+    if (!p->source->sampleData)
+    {
+        for (i = 0; i < 128; i++)
+        {
+            if (p->source->patterns[i] != NULL)
+            {
+                free(p->source->patterns[i]);
+                p->source->patterns[i] = NULL;
+            }
+        }
+
+        return (false);
+    }
+
+    bufseek(fmodule, commentOffset + commentLength, SEEK_SET);
+
+    for (i = 0; i < sampleCount; i++)
+    {
+        p->source->samples[i].offset = sampleOffset;
+        bufread(&p->source->sampleData[sampleOffset], 1, p->source->samples[i].length, fmodule);
+        if (!(p->source->samples[i].attribute & 1))
+            for (j = (int)sampleOffset; (unsigned int)j < sampleOffset + p->source->samples[i].length; j++)
+                p->source->sampleData[(unsigned int)j] ^= 0x80;
+        sampleOffset += p->source->samples[i].length;
+    }
+
+    p->source->originalSampleData = (char *)malloc(totalSampleSize);
+    if (p->source->originalSampleData == NULL)
+    {
+        free(p->source->sampleData);
+        p->source->sampleData = NULL;
+
+        for (i = 0; i < 128; ++i)
+        {
+            if (p->source->patterns[i] != NULL)
+            {
+                free(p->source->patterns[i]);
+                p->source->patterns[i] = NULL;
+            }
+        }
+
+        return (false);
+    }
+
+    memcpy(p->source->originalSampleData, p->source->sampleData, totalSampleSize);
+    p->source->head.totalSampleSize = totalSampleSize;
+
+    p->useLEDFilter = false;
+    p->moduleLoaded = true;
+
+    return (true);
+}
+
+static void checkModType(MODULE_HEADER *h, const char *buf)
+{
+    if (!strncmp(buf, "M.K.", 4))
+    {
+        h->format = FORMAT_MK; // ProTracker v1.x
+        h->channelCount = 4;
+        return;
+    }
+    else if (!strncmp(buf, "M!K!", 4))
+    {
+        h->format = FORMAT_MK2; // ProTracker v2.x (if >64 patterns)
+        h->channelCount = 4;
+        return;
+    }
+    else if (!strncmp(buf, "FLT4", 4))
+    {
+        h->format = FORMAT_FLT4; // StarTrekker (4 channel MODs only)
+        h->channelCount = 4;
+        return;
+    }
+    else if (!strncmp(buf, "FLT8", 4))
+    {
+        h->format = FORMAT_FLT8;
+        h->channelCount = 8;
+        return;
+    }
+    else if (!strncmp(buf + 1, "CHN", 3) && buf[0] >= '1' && buf[0] <= '9')
+    {
+        h->format = FORMAT_NCHN; // FastTracker II (1-9 channel MODs)
+        h->channelCount = buf[0] - '0';
+        return;
+    }
+    else if (!strncmp(buf + 2, "CH", 2) && buf[0] >= '1' && buf[0] <= '3' && buf[1] >= '0' && buf[1] <= '9')
+    {
+        h->format = FORMAT_NNCH; // FastTracker II (10-32 channel MODs)
+        h->channelCount = (buf[0] - '0') * 10 + (buf[1] - '0');
+        if (h->channelCount > 32)
+        {
+            h->format = FORMAT_UNKNOWN;
+            h->channelCount = 4;
+        }
+        return;
+    }
+    else if (!strncmp(buf, "16CN", 4))
+    {
+        h->format = FORMAT_16CN;
+        h->channelCount = 16;
+        return;
+    }
+    else if (!strncmp(buf, "32CN", 4))
+    {
+        h->format = FORMAT_32CN;
+        h->channelCount = 32;
+        return;
+    }
+    else if (!strncmp(buf, "N.T.", 4))
+    {
+        h->format = FORMAT_MK; // NoiseTracker 1.0, same as ProTracker v1.x (?)
+        h->channelCount = 4;
+        return;
+    }
+
+    h->format = FORMAT_UNKNOWN; // May be The Ultimate SoundTracker, 15 samples
+    h->channelCount = 4;
 }
 
 int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength)
 {
-  player *p = (player *)_p;
-  BUF *fModule = bufopen(buf, bufLength);
-  modnote_t *note = NULL;
+    player *p = (player *)_p;
+    unsigned char bytes[4];
+    char modSig[4];
+    int i;
+    int j;
+    int pattern;
+    int row;
+    int channel;
+    int sampleOffset;
+    int mightBeSTK;
+    int numSamples;
+    int tmp;
+    modnote_t *note;
+    BUF *fmodule;
 
-  char MK[5];
+    sampleOffset = 0;
+    mightBeSTK = false;
 
-  int i, j, k;
-  unsigned int total_sample_size = 0, total_sample_count = 0, sample_offset = 0, might_be_an_STK_tune = 0;
+    p->source = (MODULE *)calloc(1, sizeof (MODULE));
+    if (p->source == NULL)
+        return (false);
 
-  p->source = (MODULE *)calloc(1, sizeof (MODULE));
-
-  bufread(MK, 1, 3, fModule);
-  if (!strncmp(MK, "MTM", 3))
-  {
-    i = playptmod_LoadMTM(p, fModule);
-    bufclose(fModule);
-    return i;
-  }
-
-  bufseek(fModule, 1080, SEEK_SET);
-  bufread(MK, 1, 4, fModule);
-
-  check_mod_tag(&p->source->head, MK);
-  if (p->source->head.format == FORMAT_UNKNOWN)
-    might_be_an_STK_tune = 1;
-
-  bufseek(fModule, 20, SEEK_SET);
-
-  for (i = 0; i < MOD_SAMPLES; i++)
-  {
-    if (might_be_an_STK_tune && (i > 14))
+    fmodule = bufopen(buf, bufLength);
+    if (fmodule == NULL)
     {
-      p->source->samples[i].loop_length = 2;
+        free(p->source);
+
+        return (false);
     }
-    else
+
+    if (bufLength <= 1624)
     {
-      bufseek(fModule, 22, SEEK_CUR);
+        free(p->source);
+        bufclose(fmodule);
 
-      p->source->samples[i].length = file_get_word_bigendian(fModule) << 1;
-
-      bufread(&p->source->samples[i].finetune, 1, 1, fModule);
-      p->source->samples[i].finetune = LO_NYBBLE(p->source->samples[i].finetune);
-
-      bufread(&p->source->samples[i].volume, 1, 1, fModule);
-      if (p->source->samples[i].volume > 64)
-        p->source->samples[i].volume = 64;
-
-      if (might_be_an_STK_tune)
-      {
-        p->source->samples[i].loop_start = file_get_word_bigendian(fModule);
-      }
-      else
-      {
-        p->source->samples[i].loop_start = file_get_word_bigendian(fModule) << 1;
-      }
-      p->source->samples[i].loop_length = file_get_word_bigendian(fModule) << 1;
-
-      if (p->source->samples[i].loop_length < 2)
-             p->source->samples[i].loop_length = 2;
-
-	  total_sample_count += p->source->samples[i].length;
-
-      p->source->samples[i].attribute = 0;
+        return (false);
     }
-  }
 
-  bufread(&p->source->head.order_count, 1, 1, fModule);
-  if ((p->source->head.order_count == 0) || (p->source->head.order_count > 128))
-  {
-    bufclose(fModule);
-    return 0;
-  }
-
-  bufread(&p->source->head.restart_pos, 1, 1, fModule);
-  if (might_be_an_STK_tune && (p->source->head.restart_pos != 120))
-  {
-    bufclose(fModule);
-    return 0;
-  }
-
-  if (p->source->head.restart_pos >= p->source->head.order_count)
-    p->source->head.restart_pos = 0;
-
-  if (might_be_an_STK_tune)
-    p->source->head.format = FORMAT_STK;
-
-  for (i = 0; i < 128; i++)
-  {
-    bufread(&p->source->head.order[i], 1, 1, fModule);
-
-    if (p->source->head.format == FORMAT_FLT8)
-      p->source->head.order[i] >>= 1;
-  }
-
-  if (p->pattern_counting == 0)
-  {
-    bufseek(fModule, 0, SEEK_END);
-    for (i = p->source->head.format == FORMAT_STK ? 14 : 30; i >= 0; i--)
+    bufread(modSig, 1, 3, fmodule);
+    if (!strncmp(modSig, "MTM", 3))
     {
-      if (p->source->samples[i].length >= 5)
-      {
-        j = (p->source->samples[i].length + 1) / 2 + 5 + 16;
-        if (j < p->source->samples[i].length)
+        i = playptmod_LoadMTM(p, fmodule);
+        bufclose(fmodule);
+        return i;
+    }
+
+    bufseek(fmodule, 0x0438, SEEK_SET);
+    bufread(modSig, 1, 4, fmodule);
+
+    checkModType(&p->source->head, modSig);
+    switch (p->source->head.format)
+    {
+        case FORMAT_MK: p->source->MAX_PATTERNS = 64; break;
+        case FORMAT_MK2:
+        case FORMAT_FLT4:
+        case FORMAT_FLT8:
+        case FORMAT_NCHN:
+        case FORMAT_NNCH:
+        case FORMAT_16CN:
+        case FORMAT_32CN:
+                        p->source->MAX_PATTERNS = 100; break;
+
+        case FORMAT_UNKNOWN:
+            p->source->MAX_PATTERNS = 64;
+            mightBeSTK = true;
+        break;
+    }
+
+    bufseek(fmodule, 20, SEEK_SET);
+
+    for (i = 0; i < MOD_SAMPLES; ++i)
+    {
+        if ((mightBeSTK == true) && (i > 14))
         {
-          bufseek(fModule, -j, SEEK_CUR);
-          bufread(MK, 1, 5, fModule);
-          if (!memcmp(MK, "ADPCM", 5))
-          {
-            total_sample_size += j;
-            bufseek(fModule, -5, SEEK_CUR);
-          }
-          else
-          {
-            total_sample_size += p->source->samples[i].length;
-            bufseek(fModule, -(signed long)(p->source->samples[i].length + 5 - j), SEEK_CUR);
-          }
+            p->source->samples[i].loopLength = 2;
         }
         else
         {
-          total_sample_size += p->source->samples[i].length;
-          bufseek(fModule, -(signed long)p->source->samples[i].length, SEEK_CUR);
-        }
-      }
-      else
-      {
-        total_sample_size += p->source->samples[i].length;
-        bufseek(fModule, -(signed long)p->source->samples[i].length, SEEK_CUR);
-      }
-    }
-    p->source->head.pattern_count = ((bufLength - total_sample_size) -
-      ((p->source->head.format == FORMAT_STK) ? 600 : 1084 - 4)) / (256 * p->source->head.channel_count);
+            bufseek(fmodule, 22, SEEK_CUR);
 
-    for (i = 0; i < 128; i++)
-    {
-      if (p->source->head.order[i] >= p->source->head.pattern_count)
-        p->source->head.order[i] = 0;
-    }
-  }
-  else if (p->pattern_counting == 1)
-  {
-    p->source->head.pattern_count = 0;
-    for (i = 0; i < 128; i++)
-    {
-      if (p->source->head.order[i] > p->source->head.pattern_count)
-        p->source->head.pattern_count = p->source->head.order[i];
-    }
-    p->source->head.pattern_count++;
-  }
-  else return 0; /* unsupported pattern counting method */
+            p->source->samples[i].length = bufGetWordBigEndian(fmodule) * 2;
 
-  bufseek(fModule, p->source->head.format == FORMAT_STK ? 600 : 1084, SEEK_SET);
+            bufread(&p->source->samples[i].fineTune, 1, 1, fmodule);
+            p->source->samples[i].fineTune = p->source->samples[i].fineTune & 0x0F;
 
-  for (i = 0; i < p->source->head.pattern_count; i++)
-  {
-    note = p->source->patterns[i] = (modnote_t *)malloc(sizeof (modnote_t) * MOD_ROWS * p->source->head.channel_count);
-    if (p->source->patterns[i] == NULL)
-    {
-      bufclose(fModule);
-      for (j = 0; j < i; j++)
-      {
-        if (p->source->patterns[j] != NULL)
-        {
-          free(p->source->patterns[j]);
-          p->source->patterns[j] = NULL;
-        }
-      }
-      return 0;
-    }
+            bufread(&p->source->samples[i].volume, 1, 1, fmodule);
+            if (p->source->samples[i].volume > 64)
+                p->source->samples[i].volume = 64;
 
-    if (p->source->head.format == FORMAT_FLT8)
-    {
-      for (j = 0; j < MOD_ROWS; j++)
-      {
-        for (k = 0; k < 8; k++)
-        {
-          unsigned char bytes[4];
+            if (mightBeSTK == true)
+                p->source->samples[i].loopStart = bufGetWordBigEndian(fmodule);
+            else
+                p->source->samples[i].loopStart = bufGetWordBigEndian(fmodule) * 2;
 
-          if (k == 0 && j > 0) bufseek(fModule, -1024, SEEK_CUR);
-          else if (k == 4) bufseek(fModule, 1024 - 4 * 4, SEEK_CUR);
+            p->source->samples[i].loopLength = bufGetWordBigEndian(fmodule) * 2;
 
-          bufread(bytes, 1, 4, fModule);
+            if (p->source->samples[i].loopLength < 2)
+                p->source->samples[i].loopLength = 2;
 
-          note->period = (LO_NYBBLE(bytes[0]) << 8) | bytes[1];
-          note->sample = (bytes[0] & 0xF0) | HI_NYBBLE(bytes[2]);
-          note->command = LO_NYBBLE(bytes[2]);
-          note->param = bytes[3];
-
-          if ((note->command == 0x0F) && (note->param == 0x00))
-          {
-            note->command = 0;
-            note->param = 0;
-          }
-
-          note++;
-        }
-      }
-    }
-    else
-    {
-      for (j = 0; j < MOD_ROWS; j++)
-      {
-        for (k = 0; k < p->source->head.channel_count; k++)
-        {
-          unsigned char bytes[4];
-          bufread(bytes, 1, 4, fModule);
-
-          note->period = (LO_NYBBLE(bytes[0]) << 8) | bytes[1];
-          note->sample = (bytes[0] & 0xF0) | HI_NYBBLE(bytes[2]);
-          note->command = LO_NYBBLE(bytes[2]);
-          note->param = bytes[3];
-
-          if ((note->command == 0x0F) && (note->param == 0x00))
-          {
-            note->command = 0;
-            note->param = 0;
-          }
-
-          if (p->source->head.format == FORMAT_NCHN || p->source->head.format == FORMAT_NNCH)
-          {
-            if (note->command == 0x08)
+            if (mightBeSTK == true)
             {
-              note->command = 0;
-              note->param = 0;
-            }
-            else if ((note->command == 0x0E) && (HI_NYBBLE(note->param) == 0x08))
-            {
-              note->command = 0;
-              note->param = 0;
-            }
-          }
+                if (p->source->samples[i].loopLength > 4)
+                {
+                    tmp = p->source->samples[i].loopStart;
+                    p->source->samples[i].length -= p->source->samples[i].loopStart;
+                    p->source->samples[i].loopStart = 0;
+                    p->source->samples[i].tmpLoopStart = tmp;
+                }
 
-          note++;
+                p->source->samples[i].fineTune = 0;
+            }
+
+            p->source->samples[i].attribute = 0;
+
+            p->source->head.totalSampleSize += p->source->samples[i].length;
         }
-      }
-    }
-  }
-
-  p->source->sample_data = (signed char *)malloc(total_sample_count);
-  if (p->source->sample_data == NULL)
-  {
-    for (i = 0; i < 128; i++)
-    {
-      if (p->source->patterns[i] != NULL)
-      {
-        free(p->source->patterns[i]);
-        p->source->patterns[i] = NULL;
-      }
     }
 
-    bufclose(fModule);
-
-    return 0;
-  }
-
-  for (i = 0; i < (p->source->head.format == FORMAT_STK ? 15 : 31); i++)
-  {
-    int delta;
-    unsigned char byte;
-    signed char compression_table[16];
-    p->source->samples[i].offset = sample_offset;
-    if (p->source->samples[i].length >= 5)
+    bufread(&p->source->head.orderCount, 1, 1, fmodule);
+    if ((p->source->head.orderCount == 0) || (p->source->head.orderCount > 128))
     {
-      bufread(compression_table, 1, 5, fModule);
-      if (!memcmp(compression_table, "ADPCM", 5))
-      {
-        delta = 0;
-        bufread(compression_table, 1, 16, fModule);
-        for (j = 0; j < p->source->samples[i].length; j++)
+        free(p->source);
+        bufclose(fmodule);
+
+        return (false);
+    }
+
+    bufread(&p->source->head.restartPos, 1, 1, fmodule);
+    if ((mightBeSTK == true) && ((p->source->head.restartPos == 0)
+        || (p->source->head.restartPos > 220)))
+    {
+
+        free(p->source);
+        bufclose(fmodule);
+
+        return (false);
+    }
+
+
+    if (mightBeSTK == true)
+    {
+        p->source->head.format = FORMAT_STK;
+
+        if (p->source->head.restartPos == 120)
+            p->source->head.restartPos = 125;
+        else
+            p->source->head.initBPM = (short)(1773447 / ((240 - p->source->head.restartPos) * 122));
+    }
+
+    for (i = 0; i < 128; ++i)
+    {
+        bufread(&p->source->head.order[i], 1, 1, fmodule);
+
+        if (p->source->head.order[i] > p->source->head.patternCount)
+            p->source->head.patternCount = p->source->head.order[i];
+    }
+
+    p->source->head.patternCount++;
+
+    if (p->source->head.format != FORMAT_STK)
+        bufseek(fmodule, 4, SEEK_CUR);
+
+    for (pattern = 0; pattern < p->source->MAX_PATTERNS; ++pattern)
+    {
+        p->source->patterns[pattern] = (modnote_t *)calloc(64 * 4, sizeof (modnote_t));
+        if (p->source->patterns[pattern] == NULL)
         {
-          bufread(&byte, 1, 1, fModule);
-          delta += compression_table[LO_NYBBLE(byte)];
-          p->source->sample_data[sample_offset + j] = delta;
-          j++;
-          if (j >= p->source->samples[i].length) break;
-          delta += compression_table[HI_NYBBLE(byte)];
-          p->source->sample_data[sample_offset + j] = delta;
+            for (i = 0; i < pattern; ++i)
+            {
+                if (p->source->patterns[i] != NULL)
+                {
+                    free(p->source->patterns[i]);
+                    p->source->patterns[i] = NULL;
+                }
+            }
+            bufclose(fmodule);
+            free(p->source);
+
+            return (false);
         }
-      }
-      else
-      {
-        memcpy(&p->source->sample_data[sample_offset], compression_table, 5);
-        bufread(&p->source->sample_data[sample_offset + 5], 1, p->source->samples[i].length - 5, fModule);
-      }
     }
-    else
+
+    for (pattern = 0; pattern < p->source->head.patternCount; ++pattern)
     {
-      bufread(&p->source->sample_data[sample_offset], 1, p->source->samples[i].length, fModule);
+        note = p->source->patterns[pattern];
+        if (p->source->head.format == FORMAT_FLT8)
+        {
+            for (row = 0; row < 64; ++row)
+            {
+                for (channel = 0; channel < 8; ++channel)
+                {
+                    unsigned char bytes[4];
+
+                    if (channel == 0 && row > 0) bufseek(fmodule, -1024, SEEK_CUR);
+                    else if (channel == 4) bufseek(fmodule, 1024 - 4 * 4, SEEK_CUR);
+
+                    bufread(bytes, 1, 4, fmodule);
+
+                    note->period = (LO_NYBBLE(bytes[0]) << 8) | bytes[1];
+                    if (note->period)
+                        note->period = CLAMP(note->period, p->minPeriod, p->maxPeriod);
+
+                    note->sample = (bytes[0] & 0xF0) | HI_NYBBLE(bytes[2]);
+                    note->command = LO_NYBBLE(bytes[2]);
+                    note->param = bytes[3];
+
+                    if ((note->command == 0x0F) && (note->param == 0x00))
+                    {
+                        note->command = 0;
+                        note->param = 0;
+                    }
+
+                    note++;
+                }
+            }
+        }
+        else
+        {
+            for (row = 0; row < 64; ++row)
+            {
+                for (channel = 0; channel < p->source->head.channelCount; ++channel)
+                {
+                    bufread(bytes, 1, 4, fmodule);
+
+                    note->period = (LO_NYBBLE(bytes[0]) << 8) | bytes[1];
+                    if (note->period != 0)
+                        note->period = CLAMP(note->period, p->minPeriod, p->maxPeriod);
+
+                    note->sample = (bytes[0] & 0xF0) | HI_NYBBLE(bytes[2]);
+                    note->command = LO_NYBBLE(bytes[2]);
+                    note->param = bytes[3];
+
+                    if (mightBeSTK == true)
+                    {
+                        if (note->command == 0x01)
+                        {
+                            note->command = 0x00;
+                        }
+                        else if (note->command == 0x02)
+                        {
+                            if (note->param & 0x0F)
+                            {
+                                note->command = 0x01;
+                                note->param &= 0x0F;
+                            }
+                            else if (note->param & 0xF0)
+                            {
+                                note->command = 0x02;
+                                note->param >>= 4;
+                            }
+                        }
+                    }
+                    else if (p->source->head.format == FORMAT_NCHN ||
+                             p->source->head.format == FORMAT_NNCH)
+                    {
+                        if ((note->command == 0x0F) && (note->param == 0x00))
+                        {
+                            note->command = 0;
+                            note->param = 0;
+                        }
+                    }
+
+                    note++;
+                }
+            }
+        }
     }
-    sample_offset += p->source->samples[i].length;
-  }
 
-  p->source->original_sample_data = (signed char *)malloc(total_sample_count);
-  if (p->source->original_sample_data == NULL)
-  {
-    free(p->source->sample_data);
-    p->source->sample_data = NULL;
-
-    for (i = 0; i < 128; i++)
+    p->source->sampleData = (char *)malloc(p->source->head.totalSampleSize);
+    if (p->source->sampleData == NULL)
     {
-      if (p->source->patterns[i] != NULL)
-      {
-        free(p->source->patterns[i]);
-        p->source->patterns[i] = NULL;
-      }
+        bufclose(fmodule);
+        for (pattern = 0; pattern < p->source->head.patternCount; ++i)
+        {
+            if (p->source->patterns[pattern] != NULL)
+            {
+                free(p->source->patterns[pattern]);
+                p->source->patterns[pattern] = NULL;
+            }
+        }
+        free(p->source);
+
+        return (false);
     }
 
-    bufclose(fModule);
+    numSamples = (p->source->head.format == FORMAT_STK) ? 15 : 31;
+    for (i = 0; i < numSamples; ++i)
+    {
+        if ((mightBeSTK == true) && (p->source->samples[i].loopLength > 4))
+        {
+            p->source->samples[i].offset = sampleOffset;
 
-    return 0;
-  }
+            for (j = 0; j < p->source->samples[i].tmpLoopStart; ++j)
+                bufseek(fmodule, 1, SEEK_CUR);
 
-  memcpy(p->source->original_sample_data, p->source->sample_data, total_sample_count);
-  p->source->total_sample_size = total_sample_count;
+            bufread(&p->source->sampleData[sampleOffset], 1, p->source->samples[i].length - p->source->samples[i].loopStart, fmodule);
+            sampleOffset += p->source->samples[i].length;
+        }
+        else
+        {
+            p->source->samples[i].offset = sampleOffset;
+            bufread(&p->source->sampleData[sampleOffset], 1, p->source->samples[i].length, fmodule);
+            sampleOffset += p->source->samples[i].length;
+        }
+    }
 
-  bufclose(fModule);
+    p->source->originalSampleData = (char *) malloc(p->source->head.totalSampleSize);
+    if (p->source->originalSampleData == NULL)
+    {
+        bufclose(fmodule);
+        free(p->source->sampleData);
+        for (pattern = 0; pattern < p->source->head.patternCount; ++i)
+        {
+            if (p->source->patterns[pattern] != NULL)
+            {
+                free(p->source->patterns[pattern]);
+                p->source->patterns[pattern] = NULL;
+            }
+        }
+        free(p->source);
 
-  p->source->head.row_count = MOD_ROWS;
-  memset(p->source->head.vol, 64, PAULA_CHANNELS);
-  for (i = 0; i < PAULA_CHANNELS; i++) p->source->head.pan[i] = ((i + 1) & 2) ? 160 : 96;
+        return (false);
+    }
 
-  p->use_led_filter = 0;
-  p->moduleLoaded = 1;
+    memcpy(p->source->originalSampleData, p->source->sampleData, p->source->head.totalSampleSize);
 
-  return 1;
+    bufclose(fmodule);
+
+    p->source->head.rowCount = MOD_ROWS;
+    memset(p->source->head.volume, 64, MAX_CHANNELS);
+    for (i = 0; i < MAX_CHANNELS; i++) p->source->head.pan[i] = ((i + 1) & 2) ? 160 : 96;
+
+    p->useLEDFilter = false;
+    p->moduleLoaded = true;
+
+    return (true);
 }
 
 int playptmod_Load(void *_p, const char *filename)
 {
-  player *p = (player *)_p;
-  if (!p->moduleLoaded)
-  {
-    int ret;
-    unsigned int fileSize;
-    unsigned char *buffer = NULL;
-    FILE *fileModule = NULL;
+    player *p = (player *)_p;
+    if (!p->moduleLoaded)
+    {
+        int i;
+        unsigned char *buffer;
+        unsigned int fileSize;
+        FILE *fileModule;
 
-    fileModule = fopen(filename, "rb");
-    if (fileModule == NULL)
-      return 0;
+        fileModule = fopen(filename, "rb");
+        if (fileModule == NULL)
+            return (false);
 
-    fseek(fileModule, 0, SEEK_END);
-    fileSize = ftell(fileModule);
-    fseek(fileModule, 0, SEEK_SET);
+        fseek(fileModule, 0, SEEK_END);
+        fileSize = ftell(fileModule);
+        fseek(fileModule, 0, SEEK_SET);
 
-    buffer = (unsigned char *)malloc(fileSize);
-    fread(buffer, 1, fileSize, fileModule);
-    fclose(fileModule);
+        buffer = (unsigned char *)malloc(fileSize);
+        if (buffer == NULL)
+        {
+            fclose(fileModule);
+            return (false);
+        }
 
-    ret = playptmod_LoadMem(_p, buffer, fileSize);
+        fread(buffer, 1, fileSize, fileModule);
+        fclose(fileModule);
 
-    free(buffer);
+        i = playptmod_LoadMem(_p, buffer, fileSize);
 
-    return ret;
-  }
+        free(buffer);
 
-  return 0;
+        return i;
+    }
+
+    return (false);
 }
 
-static void effect_arpeggio(player *p, mod_channel *ch);
-static void effect_portamento_up(player *p, mod_channel *ch);
-static void effect_portamento_down(player *p, mod_channel *ch);
-static void effect_glissando(player *p, mod_channel *ch);
-static void effect_vibrato(player *p, mod_channel *ch);
-static void effect_glissando_vslide(player *p, mod_channel *ch);
-static void effect_vibrato_vslide(player *p, mod_channel *ch);
-static void effect_tremolo(player *p, mod_channel *ch);
-static void effect_pan(player *p, mod_channel *ch);
-static void effect_sample_offset(player *p, mod_channel *ch);
-static void effect_volume_slide(player *p, mod_channel *ch);
-static void effect_position_jump(player *p, mod_channel *ch);
-static void effect_set_volume(player *p, mod_channel *ch);
-static void effect_pattern_break(player *p, mod_channel *ch);
-static void effect_extended(player *p, mod_channel *ch);
-static void effect_tempo(player *p, mod_channel *ch);
-static void effecte_setfilter(player *p, mod_channel *ch);
-static void effecte_fineportaup(player *p, mod_channel *ch);
-static void effecte_fineportadown(player *p, mod_channel *ch);
-static void effecte_glissandoctrl(player *p, mod_channel *ch);
-static void effecte_vibratoctrl(player *p, mod_channel *ch);
-static void effecte_setfinetune(player *p, mod_channel *ch);
-static void effecte_patternloop(player *p, mod_channel *ch);
-static void effecte_tremoloctrl(player *p, mod_channel *ch);
-static void effecte_karplus_strong(player *p, mod_channel *ch);
-static void effecte_retrignote(player *p, mod_channel *ch);
-static void effecte_finevolup(player *p, mod_channel *ch);
-static void effecte_finevoldown(player *p, mod_channel *ch);
-static void effecte_notecut(player *p, mod_channel *ch);
-static void effecte_notedelay(player *p, mod_channel *ch);
-static void effecte_patterndelay(player *p, mod_channel *ch);
-static void effecte_invertloop(player *p, mod_channel *ch);
+static void fxArpeggio(player *p, mod_channel *ch);
+static void fxPortamentoSlideUp(player *p, mod_channel *ch);
+static void fxPortamentoSlideDown(player *p, mod_channel *ch);
+static void fxGlissando(player *p, mod_channel *ch);
+static void fxVibrato(player *p, mod_channel *ch);
+static void fxGlissandoVolumeSlide(player *p, mod_channel *ch);
+static void fxVibratoVolumeSlide(player *p, mod_channel *ch);
+static void fxTremolo(player *p, mod_channel *ch);
+static void fxNotInUse(player *p, mod_channel *ch);
+static void fxSampleOffset(player *p, mod_channel *ch);
+static void fxVolumeSlide(player *p, mod_channel *ch);
+static void fxPositionJump(player *p, mod_channel *ch);
+static void fxSetVolume(player *p, mod_channel *ch);
+static void fxPatternBreak(player *p, mod_channel *ch);
+static void fxExtended(player *p, mod_channel *ch);
+static void fxSetTempo(player *p, mod_channel *ch);
+static void efxSetLEDFilter(player *p, mod_channel *ch);
+static void efxFinePortamentoSlideUp(player *p, mod_channel *ch);
+static void efxFinePortamentoSlideDown(player *p, mod_channel *ch);
+static void efxGlissandoControl(player *p, mod_channel *ch);
+static void efxVibratoControl(player *p, mod_channel *ch);
+static void efxSetFineTune(player *p, mod_channel *ch);
+static void efxPatternLoop(player *p, mod_channel *ch);
+static void efxTremoloControl(player *p, mod_channel *ch);
+static void efxKarplusStrong(player *p, mod_channel *ch);
+static void efxRetrigNote(player *p, mod_channel *ch);
+static void efxFineVolumeSlideUp(player *p, mod_channel *ch);
+static void efxFineVolumeSlideDown(player *p, mod_channel *ch);
+static void efxNoteCut(player *p, mod_channel *ch);
+static void efxNoteDelay(player *p, mod_channel *ch);
+static void efxPatternDelay(player *p, mod_channel *ch);
+static void efxInvertLoop(player *p, mod_channel *ch);
 
-typedef void (*effect_routine)(player *, mod_channel *);
+static void fxExtended_FT2(player *p, mod_channel *ch);
+static void fxPan(player *p, mod_channel *ch);
+static void efxPan(player *p, mod_channel *ch);
 
-static const effect_routine effect_routines[] =
+typedef void (*effect_routine)(player *p, mod_channel *);
+
+static effect_routine fxRoutines[16] =
 {
-  effect_arpeggio,
-  effect_portamento_up,
-  effect_portamento_down,
-  effect_glissando,
-  effect_vibrato,
-  effect_glissando_vslide,
-  effect_vibrato_vslide,
-  effect_tremolo,
-  effect_pan,
-  effect_sample_offset,
-  effect_volume_slide,
-  effect_position_jump,
-  effect_set_volume,
-  effect_pattern_break,
-  effect_extended,
-  effect_tempo
+    fxArpeggio,
+    fxPortamentoSlideUp,
+    fxPortamentoSlideDown,
+    fxGlissando,
+    fxVibrato,
+    fxGlissandoVolumeSlide,
+    fxVibratoVolumeSlide,
+    fxTremolo,
+    fxNotInUse,
+    fxSampleOffset,
+    fxVolumeSlide,
+    fxPositionJump,
+    fxSetVolume,
+    fxPatternBreak,
+    fxExtended,
+    fxSetTempo
 };
 
-static const effect_routine effecte_routines[] =
+static effect_routine fxRoutines_FT2[16] =
 {
-  effecte_setfilter,
-  effecte_fineportaup,
-  effecte_fineportadown,
-  effecte_glissandoctrl,
-  effecte_vibratoctrl,
-  effecte_setfinetune,
-  effecte_patternloop,
-  effecte_tremoloctrl,
-  effecte_karplus_strong,
-  effecte_retrignote,
-  effecte_finevolup,
-  effecte_finevoldown,
-  effecte_notecut,
-  effecte_notedelay,
-  effecte_patterndelay,
-  effecte_invertloop
+    fxArpeggio,
+    fxPortamentoSlideUp,
+    fxPortamentoSlideDown,
+    fxGlissando,
+    fxVibrato,
+    fxGlissandoVolumeSlide,
+    fxVibratoVolumeSlide,
+    fxTremolo,
+    fxPan,
+    fxSampleOffset,
+    fxVolumeSlide,
+    fxPositionJump,
+    fxSetVolume,
+    fxPatternBreak,
+    fxExtended_FT2,
+    fxSetTempo
 };
 
-static void UpdateInvertLoop(player *p, mod_channel *ch)
+static effect_routine efxRoutines[16] =
 {
-  if (ch->invloop_speed)
-  {
-    ch->invloop_delay += pt_tab_invloop[ch->invloop_speed];
-    if (ch->invloop_delay >= 128)
+    efxSetLEDFilter,
+    efxFinePortamentoSlideUp,
+    efxFinePortamentoSlideDown,
+    efxGlissandoControl,
+    efxVibratoControl,
+    efxSetFineTune,
+    efxPatternLoop,
+    efxTremoloControl,
+    efxKarplusStrong,
+    efxRetrigNote,
+    efxFineVolumeSlideUp,
+    efxFineVolumeSlideDown,
+    efxNoteCut,
+    efxNoteDelay,
+    efxPatternDelay,
+    efxInvertLoop
+};
+
+static effect_routine efxRoutines_FT2[16] =
+{
+    efxSetLEDFilter,
+    efxFinePortamentoSlideUp,
+    efxFinePortamentoSlideDown,
+    efxGlissandoControl,
+    efxVibratoControl,
+    efxSetFineTune,
+    efxPatternLoop,
+    efxTremoloControl,
+    efxPan,
+    efxRetrigNote,
+    efxFineVolumeSlideUp,
+    efxFineVolumeSlideDown,
+    efxNoteCut,
+    efxNoteDelay,
+    efxPatternDelay,
+    efxInvertLoop
+};
+
+static void processInvertLoop(player *p, mod_channel *ch)
+{
+    char invertLoopTemp;
+    char *invertLoopData;
+    MODULE_SAMPLE *s;
+
+    if (ch->invertLoopSpeed > 0)
     {
-      ch->invloop_delay = 0;
-
-      if (ch->sample)
-      {
-        MODULE_SAMPLE *s = &p->source->samples[ch->sample - 1];
-
-        if (s->loop_length >= 4)
+        ch->invertLoopDelay += invertLoopSpeeds[ch->invertLoopSpeed];
+        if (ch->invertLoopDelay >= 128)
         {
-          ch->invloop_offset++;
-          if (ch->invloop_offset >= (unsigned)(s->loop_start + s->loop_length))
-            ch->invloop_offset = s->loop_start;
+            ch->invertLoopDelay = 0;
 
-          p->source->sample_data[s->offset + ch->invloop_offset] ^= 0xFF;
+            if (ch->sample != 0)
+            {
+                s = &p->source->samples[ch->sample - 1];
+                if (s->loopLength > 2)
+                {
+                    ch->invertLoopOffset++;
+                    if (ch->invertLoopOffset >= (s->loopStart + s->loopLength))
+                        ch->invertLoopOffset = s->loopStart;
+
+                    invertLoopData = &p->source->sampleData[s->offset + ch->invertLoopOffset];
+                    invertLoopTemp = -1 - *invertLoopData;
+                    *invertLoopData = invertLoopTemp;
+                }
+            }
         }
-      }
     }
-  }
 }
 
-static void effecte_setfilter(player *p, mod_channel *ch)
+static void efxSetLEDFilter(player *p, mod_channel *ch)
 {
-  if (!p->mod_tick)
-    p->use_led_filter = !(ch->param & 1);
+    if (p->modTick == 0)
+        p->useLEDFilter = !(ch->param & 1);
 }
 
-static void effecte_fineportaup(player *p, mod_channel *ch)
+static void efxFinePortamentoSlideUp(player *p, mod_channel *ch)
 {
-  if (!p->mod_tick)
-  {
-    if (p->aperiod)
+    if (p->modTick == 0)
     {
-      ch->period -= LO_NYBBLE(ch->param);
-
-      if (ch->period < p->minPeriod)
-        ch->period = p->minPeriod;
-
-      p->aperiod = ch->period;
-    }
-  }
-}
-
-static void effecte_fineportadown(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    if (p->aperiod)
-    {
-      ch->period += LO_NYBBLE(ch->param);
-
-      if (ch->period > p->maxPeriod)
-        ch->period = p->maxPeriod;
-
-      p->aperiod = ch->period;
-    }
-  }
-}
-
-static void effecte_glissandoctrl(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-    ch->glissandoctrl = LO_NYBBLE(ch->param);
-}
-
-static void effecte_vibratoctrl(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-    ch->vibratoctrl = LO_NYBBLE(ch->param);
-}
-
-static void effecte_setfinetune(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-    ch->finetune = LO_NYBBLE(ch->param);
-}
-
-static void effecte_patternloop(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    unsigned char param = LO_NYBBLE(ch->param);
-    if (!param)
-    {
-      ch->pattern_loop_row = p->mod_row;
-
-      return;
-    }
-
-    if (ch->pattern_loop_times == 0)
-    {
-      ch->pattern_loop_times = param;
-    }
-    else
-    {
-      ch->pattern_loop_times--;
-      if (ch->pattern_loop_times == 0)
-        return;
-    }
-
-    p->PBreakPosition = ch->pattern_loop_row;
-    p->PBreakFlag = 1;
-  }
-}
-
-static void effecte_tremoloctrl(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-    ch->tremoloctrl = LO_NYBBLE(ch->param);
-}
-
-static void effecte_karplus_strong(player *p, mod_channel *ch)
-{
-  if (ch->sample)
-  {
-    MODULE_SAMPLE *s = &p->source->samples[ch->sample - 1];
-
-    signed char *sample_loop_data = p->source->sample_data + (s->offset + s->loop_start);
-
-    unsigned int loop_length = s->loop_length - 2;
-    unsigned int loop_length_counter = loop_length;
-
-    while (loop_length_counter--)
-    {
-      *sample_loop_data = (*sample_loop_data + *(sample_loop_data + 1)) >> 1;
-      sample_loop_data++;
-    }
-
-    *sample_loop_data = (*sample_loop_data + *(sample_loop_data - loop_length)) >> 1;
-  }
-}
-
-static void effecte_retrignote(player *p, mod_channel *ch)
-{
-  unsigned char retrig_on_tick = LO_NYBBLE(ch->param);
-
-  if (retrig_on_tick)
-  {
-    if (!(p->mod_tick % retrig_on_tick))
-      p->aflags |= AFLAG_START;
-  }
-}
-
-static void effecte_finevolup(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    ch->volume += LO_NYBBLE(ch->param);
-
-    if (ch->volume > 64)
-      ch->volume = 64;
-
-    p->avolume = ch->volume;
-  }
-}
-
-static void effecte_finevoldown(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    ch->volume -= LO_NYBBLE(ch->param);
-
-    if (ch->volume < 0)
-      ch->volume = 0;
-
-    p->avolume = ch->volume;
-  }
-}
-
-static void effecte_notecut(player *p, mod_channel *ch)
-{
-  if (p->mod_tick == LO_NYBBLE(ch->param))
-    ch->volume = p->avolume = 0;
-}
-
-static void effecte_notedelay(player *p, mod_channel *ch)
-{
-  unsigned char delay_tick = LO_NYBBLE(ch->param);
-
-  if (!p->mod_tick)
-    ch->tmp_aflags = p->aflags;
-
-  if (p->mod_tick < delay_tick)
-    p->aflags = AFLAG_DELAY;
-  else if (p->mod_tick == delay_tick)
-    p->aflags = ch->tmp_aflags;
-}
-
-static void effecte_patterndelay(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    if (!p->PattDelayTime2)
-      p->PattDelayTime = LO_NYBBLE(ch->param) + 1;
-  }
-}
-
-static void effecte_invertloop(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    ch->invloop_speed = LO_NYBBLE(ch->param);
-    UpdateInvertLoop(p, ch);
-  }
-}
-
-static void do_glissando(player *p, mod_channel *ch)
-{
-  if (p->aperiod)
-  {
-    if (ch->period < ch->tperiod)
-    {
-      ch->period += ch->glissandospeed;
-
-      if (ch->period > ch->tperiod)
-      ch->period = ch->tperiod;
-    }
-    else
-    {
-      ch->period -= ch->glissandospeed;
-
-      if (ch->period < ch->tperiod)
-      ch->period = ch->tperiod;
-    }
-
-    if (ch->glissandoctrl)
-    {
-      int i;
-      short *tablePointer;
-      if (p->minPeriod == PT_MIN_PERIOD)
-      {
-        tablePointer = (short *)&rawPeriodTable[ch->finetune * 37];
-        for (i = 0; i < 36; i++)
+        if (p->tempPeriod > 0)
         {
-          if (tablePointer[i] <= ch->period)
-          {
-            p->aperiod = tablePointer[i];
+            ch->period -= LO_NYBBLE(ch->param);
+
+            if (ch->period < p->minPeriod)
+                ch->period = p->minPeriod;
+
+            p->tempPeriod = ch->period;
+        }
+    }
+}
+
+static void efxFinePortamentoSlideDown(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        if (p->tempPeriod > 0)
+        {
+            ch->period += LO_NYBBLE(ch->param);
+
+            if (ch->period > p->maxPeriod)
+                ch->period = p->maxPeriod;
+
+            p->tempPeriod = ch->period;
+        }
+    }
+}
+
+static void efxGlissandoControl(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+        ch->glissandoControl = LO_NYBBLE(ch->param);
+}
+
+static void efxVibratoControl(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+        ch->vibratoControl = LO_NYBBLE(ch->param);
+}
+
+static void efxSetFineTune(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+        ch->fineTune = LO_NYBBLE(ch->param);
+}
+
+static void efxPatternLoop(player *p, mod_channel *ch)
+{
+    unsigned char tempParam;
+
+    if (p->modTick == 0)
+    {
+        tempParam = LO_NYBBLE(ch->param);
+        if (tempParam == 0)
+        {
+            ch->patternLoopRow = p->modRow;
+
             return;
-          }
         }
-      }
-      else
-      {
-        tablePointer = (short *)&extendedRawPeriodTable[ch->finetune * 85];
-        for (i = 0; i < 84; i++)
+
+        if (ch->patternLoopCounter == 0)
         {
-          if (tablePointer[i] <= ch->period)
-          {
-            p->aperiod = tablePointer[i];
-            return;
-          }
+            ch->patternLoopCounter = tempParam;
         }
-      }
+        else
+        {
+            ch->patternLoopCounter--;
+            if (ch->patternLoopCounter == 0)
+                return;
+        }
+
+        p->PBreakPosition = ch->patternLoopRow;
+        p->PBreakFlag = true;
     }
-    else
+}
+
+static void efxTremoloControl(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+        ch->tremoloControl = LO_NYBBLE(ch->param);
+}
+
+static void efxKarplusStrong(player *p, mod_channel *ch)
+{
+    char *sampleLoopData;
+    unsigned int loopLength;
+    unsigned int loopLengthCounter;
+    MODULE_SAMPLE *s;
+
+    if (ch->sample > 0)
     {
-      p->aperiod = ch->period;
+        s = &p->source->samples[ch->sample - 1];
+
+        sampleLoopData = p->source->sampleData + s->offset + s->loopStart;
+
+        loopLength = s->loopLength - 2;
+        loopLengthCounter = loopLength;
+
+        while (loopLengthCounter--)
+        {
+            *sampleLoopData = (*sampleLoopData + *(sampleLoopData + 1)) / 2;
+            sampleLoopData++;
+        }
+
+        *sampleLoopData = (*sampleLoopData + *(sampleLoopData - loopLength)) / 2;
     }
-  }
 }
 
-static void do_vibrato(player *p, mod_channel *ch)
+static void efxRetrigNote(player *p, mod_channel *ch)
 {
-  if (p->aperiod)
-  {
-    int vib_data, vib_pos = (ch->vibratopos >> 2) & 0x1F;
+    unsigned char retrigTick;
 
-    switch (ch->vibratoctrl & 3)
+    retrigTick = LO_NYBBLE(ch->param);
+    if (retrigTick > 0)
     {
-      case 0: vib_data = p->pt_tab_vibsine[vib_pos]; break;
-
-      case 1:
-      vib_data = (ch->vibratopos < 128) ? (vib_pos << 3) : (255 - (vib_pos << 3));
-      break;
-
-      default: vib_data = 255; break;
+        if ((p->modTick % retrigTick) == 0)
+            p->tempFlags |= TEMPFLAG_START;
     }
+}
 
-    vib_data = (vib_data * ch->vibratodepth) >> 7;
-    if (ch->vibratopos < 128)
+static void efxFineVolumeSlideUp(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
     {
-      p->aperiod += (short)vib_data;
-      if (p->minPeriod == PT_MIN_PERIOD && p->aperiod > 907)
-        p->aperiod = 907;
-      else if (p->aperiod > p->maxPeriod)
-        p->aperiod = p->maxPeriod;
+        ch->volume += LO_NYBBLE(ch->param);
+
+        if (ch->volume > 64)
+            ch->volume = 64;
+
+        p->tempVolume = ch->volume;
     }
-    else
+}
+
+static void efxFineVolumeSlideDown(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
     {
-      p->aperiod -= (short)vib_data;
-      if (p->minPeriod == PT_MIN_PERIOD && p->aperiod < 108)
-        p->aperiod = 108;
-      else if (p->aperiod < p->minPeriod)
-        p->aperiod = p->minPeriod;
+        ch->volume -= LO_NYBBLE(ch->param);
+
+        if (ch->volume < 0)
+            ch->volume = 0;
+
+        p->tempVolume = ch->volume;
     }
-    ch->vibratopos = (ch->vibratopos + ch->vibratospeed) & 0xFF;
-  }
 }
 
-static void do_tremolo(player *p, mod_channel *ch)
+static void efxNoteCut(player *p, mod_channel *ch)
 {
-  if (p->avolume)
-  {
-    int trem_data, trem_pos = (ch->tremolopos >> 2) & 0x1F;
-
-    switch (ch->tremoloctrl & 3)
+    if (p->modTick == LO_NYBBLE(ch->param))
     {
-      case 0: trem_data = p->pt_tab_vibsine[trem_pos]; break;
-
-      case 1: // PT src typo (vibratopos)
-      trem_data = (ch->vibratopos < 128) ? (trem_pos << 3) : (255 - (trem_pos << 3));
-      break;
-
-      default: trem_data = 255; break;
-    }
-
-    trem_data = (trem_data * ch->tremolodepth) >> 6;
-    if (ch->tremolopos < 128)
-    {
-      p->avolume += (char)trem_data;
-      if (p->avolume > 64)
-        p->avolume = 64;
-    }
-    else
-    {
-      p->avolume -= (char)trem_data;
-      if (p->avolume < 0)
-        p->avolume = 0;
-    }
-
-    ch->tremolopos = (ch->tremolopos + ch->tremolospeed) & 0xFF;
-  }
-}
-
-static void effect_arpeggio(player *p, mod_channel *ch)
-{
-  int i, noteToAdd, arpeggioTick = p->mod_tick % 3;
-  short *tablePointer;
-
-  if (arpeggioTick == 0)
-  {
-    p->aperiod = ch->period;
-    return;
-  }
-  else if (arpeggioTick == 1)
-  {
-    noteToAdd = HI_NYBBLE(ch->param);
-  }
-  else if (arpeggioTick == 2)
-  {
-    noteToAdd = LO_NYBBLE(ch->param);
-  }
-
-  if (p->minPeriod == PT_MIN_PERIOD)
-  {
-    tablePointer = (short *)&rawPeriodTable[ch->finetune * 37];
-    for (i = 0; i < 36; i++)
-    {
-      if (tablePointer[i] <= ch->period)
-      {
-        p->aperiod = tablePointer[i + noteToAdd];
-        return;
-      }
-    }
-  }
-  else
-  {
-    tablePointer = (short *)&extendedRawPeriodTable[ch->finetune * 85];
-    for (i =  0; i < 84; i++)
-    {
-      if (tablePointer[i] <= ch->period)
-      {
-        p->aperiod = tablePointer[i + noteToAdd];
-        return;
-      }
-    }
-  }
-}
-
-static void effect_portamento_up(player *p, mod_channel *ch)
-{
-  if (p->mod_tick && p->aperiod)
-  {
-    ch->period -= ch->param;
-
-    if (ch->period < p->minPeriod)
-      ch->period = p->minPeriod;
-
-    p->aperiod = ch->period;
-  }
-}
-
-static void effect_portamento_down(player *p, mod_channel *ch)
-{
-  if (p->mod_tick && p->aperiod)
-  {
-    ch->period += ch->param;
-
-    if (ch->period > p->maxPeriod)
-      ch->period = p->maxPeriod;
-
-    p->aperiod = ch->period;
-  }
-}
-
-static void effect_glissando(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    if (ch->param)
-      ch->glissandospeed = ch->param;
-  }
-  else
-  {
-    do_glissando(p, ch);
-  }
-}
-
-static void effect_vibrato(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    unsigned char hi_nybble = HI_NYBBLE(ch->param);
-    unsigned char lo_nybble = LO_NYBBLE(ch->param);
-
-    if (hi_nybble)
-      ch->vibratospeed = hi_nybble << 2;
-
-    if (lo_nybble)
-      ch->vibratodepth = lo_nybble;
-  }
-  else
-  {
-    do_vibrato(p, ch);
-  }
-}
-
-static void effect_glissando_vslide(player *p, mod_channel *ch)
-{
-  if (p->mod_tick)
-  {
-    do_glissando(p, ch);
-    effect_volume_slide(p, ch);
-  }
-}
-
-static void effect_vibrato_vslide(player *p, mod_channel *ch)
-{
-  if (p->mod_tick)
-  {
-    do_vibrato(p, ch);
-    effect_volume_slide(p, ch);
-  }
-}
-
-static void effect_tremolo(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    unsigned char hi_nybble = HI_NYBBLE(ch->param);
-    unsigned char lo_nybble = LO_NYBBLE(ch->param);
-
-    if (hi_nybble)
-      ch->tremolospeed = hi_nybble << 2;
-
-    if (lo_nybble)
-      ch->tremolodepth = lo_nybble;
-  }
-  else
-  {
-    do_tremolo(p, ch);
-  }
-}
-
-static void effect_pan(player *p, mod_channel *ch)
-{
-  if (p->source->head.format == FORMAT_NCHN || p->source->head.format == FORMAT_NNCH || p->source->head.format == FORMAT_MTM)
-    mixer_set_ch_pan(p, ch->seqchannel, ch->param);
-}
-
-static void effect_sample_offset(player *p, mod_channel *ch)
-{
-  if (!p->mod_tick)
-  {
-    if (ch->param)
-      ch->sample_offset_temp = ch->param << 8;
-
-    ch->offset += ch->sample_offset_temp;
-  }
-}
-
-static void effect_volume_slide(player *p, mod_channel *ch)
-{
-  if (p->mod_tick)
-  {
-    unsigned char hi_nybble = HI_NYBBLE(ch->param);
-    unsigned char lo_nybble = LO_NYBBLE(ch->param);
-
-    if (!hi_nybble)
-    {
-      ch->volume -= lo_nybble;
-      if (ch->volume < 0)
         ch->volume = 0;
+        p->tempVolume = 0;
+    }
+}
 
-      p->avolume = ch->volume;
+static void efxNoteDelay(player *p, mod_channel *ch)
+{
+    unsigned char delayTick;
+
+    delayTick = LO_NYBBLE(ch->param);
+
+    if (p->modTick == 0)
+        ch->tempFlagsBackup = p->tempFlags;
+
+    if (p->modTick < delayTick)
+        p->tempFlags = TEMPFLAG_DELAY;
+    else if (p->modTick == delayTick)
+        p->tempFlags = ch->tempFlagsBackup;
+}
+
+static void efxPatternDelay(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        if (p->PattDelayTime2 == 0)
+        {
+            p->pattDelayFlag = true;
+            p->PattDelayTime = LO_NYBBLE(ch->param) + 1;
+        }
+    }
+}
+
+static void efxInvertLoop(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        ch->invertLoopSpeed = LO_NYBBLE(ch->param);
+
+        if (ch->invertLoopSpeed > 0)
+            processInvertLoop(p, ch);
+    }
+}
+
+static void handleGlissando(player *p, mod_channel *ch)
+{
+    int i;
+    short *tablePointer;
+
+    if (p->tempPeriod > 0)
+    {
+        if (ch->period < ch->tempPeriod)
+        {
+            ch->period += ch->glissandoSpeed;
+
+            if (ch->period > ch->tempPeriod)
+                ch->period = ch->tempPeriod;
+        }
+        else
+        {
+            ch->period -= ch->glissandoSpeed;
+
+            if (ch->period < ch->tempPeriod)
+                ch->period = ch->tempPeriod;
+        }
+
+        if (ch->glissandoControl != 0)
+        {
+            if (p->minPeriod == PT_MIN_PERIOD)
+            {
+                tablePointer = (short *)&rawAmigaPeriods[ch->fineTune * 37];
+                for (i = 0; i < 36; ++i)
+                {
+                    if (tablePointer[i] <= ch->period)
+                    {
+                        p->tempPeriod = tablePointer[i];
+                        return;
+                    }
+                }
+            }
+            else
+            {
+                tablePointer = (short *)&extendedRawPeriods[ch->fineTune * 85];
+                for (i = 0; i < 84; ++i)
+                {
+                    if (tablePointer[i] <= ch->period)
+                    {
+                        p->tempPeriod = tablePointer[i];
+                        return;
+                    }
+                }
+            }
+        }
+        else
+        {
+            p->tempPeriod = ch->period;
+        }
+    }
+}
+
+static void processVibrato(player *p, mod_channel *ch)
+{
+    unsigned char vibratoTemp;
+    int vibratoData;
+
+    if (p->tempPeriod > 0)
+    {
+        vibratoTemp = ch->vibratoPos >> 2;
+        vibratoTemp &= 0x1F;
+
+        switch (ch->vibratoControl & 3)
+        {
+            case 0:
+                vibratoData = p->sinusTable[vibratoTemp];
+            break;
+
+            case 1:
+            {
+                if (ch->vibratoPos < 128)
+                    vibratoData = vibratoTemp << 3;
+                else
+                    vibratoData = 255 - (vibratoTemp << 3);
+            }
+            break;
+
+            default:
+                vibratoData = 255;
+            break;
+        }
+
+        vibratoData = (vibratoData * ch->vibratoDepth) >> 7;
+
+        if (ch->vibratoPos < 128)
+        {
+            int clampPeriod = (p->minPeriod == PT_MIN_PERIOD ? 907 : p->maxPeriod);
+            p->tempPeriod += (short)vibratoData;
+            if (p->tempPeriod > clampPeriod)
+                p->tempPeriod = clampPeriod;
+        }
+        else
+        {
+            int clampPeriod = (p->minPeriod == PT_MIN_PERIOD ? 108 : p->minPeriod);
+            p->tempPeriod -= (short)vibratoData;
+            if (p->tempPeriod < clampPeriod)
+                p->tempPeriod = clampPeriod;
+        }
+
+        ch->vibratoPos += (ch->vibratoSpeed << 2);
+    }
+}
+
+static void processTremolo(player *p, mod_channel *ch)
+{
+    unsigned char tremoloTemp;
+    int tremoloData;
+
+    if (p->tempVolume > 0)
+    {
+        tremoloTemp = ch->tremoloPos >> 2;
+        tremoloTemp &= 0x1F;
+
+        switch (ch->tremoloControl & 3)
+        {
+            case 0:
+                tremoloData = p->sinusTable[tremoloTemp];
+            break;
+
+            case 1:
+            {
+                if (ch->vibratoPos < 128)
+                    tremoloData = tremoloTemp << 3;
+                else
+                    tremoloData = 255 - (tremoloTemp << 3);
+            }
+            break;
+
+            default:
+                tremoloData = 255;
+            break;
+        }
+
+        tremoloData = (tremoloData * ch->tremoloDepth) >> 6;
+
+        if (ch->tremoloPos < 128)
+        {
+            p->tempVolume += (char)tremoloData;
+            if (p->tempVolume > 64)
+                p->tempVolume = 64;
+        }
+        else
+        {
+            p->tempVolume -= (char)tremoloData;
+            if (p->tempVolume < 0)
+                p->tempVolume = 0;
+        }
+
+        ch->tremoloPos += (ch->tremoloSpeed << 2);
+    }
+}
+
+static void fxArpeggio(player *p, mod_channel *ch)
+{
+    char noteToAdd;
+    char l;
+    char m;
+    char h;
+    char arpeggioTick;
+    short *tablePointer;
+
+    noteToAdd = 0;
+
+    arpeggioTick = p->modTick % 3;
+    if (arpeggioTick == 0)
+    {
+        p->tempPeriod = ch->period;
+        return;
+    }
+    else if (arpeggioTick == 1)
+    {
+        noteToAdd = HI_NYBBLE(ch->param);
+    }
+    else if (arpeggioTick == 2)
+    {
+        noteToAdd = LO_NYBBLE(ch->param);
+    }
+
+    if (p->minPeriod == PT_MIN_PERIOD)
+    {
+        l = 0;
+        h = 35;
+
+        tablePointer = (short *)&rawAmigaPeriods[ch->fineTune * 37];
+        while (h >= l)
+        {
+            m = (h + l) / 2;
+
+            if (tablePointer[m] == ch->period)
+            {
+                p->tempPeriod = tablePointer[m + noteToAdd];
+                break;
+            }
+            else if (tablePointer[m] > ch->period)
+            {
+                l = m + 1;
+            }
+            else
+            {
+                h = m - 1;
+            }
+        }
     }
     else
     {
-      ch->volume += hi_nybble;
-      if (ch->volume > 64)
-        ch->volume = 64;
+        l = 0;
+        h = 83;
 
-      p->avolume = ch->volume;
+        tablePointer = (short *)&extendedRawPeriods[ch->fineTune * 85];
+        while (h >= l)
+        {
+            m = (h + l) / 2;
+
+            if (tablePointer[m] == ch->period)
+            {
+                p->tempPeriod = tablePointer[m + noteToAdd];
+                break;
+            }
+            else if (tablePointer[m] > ch->period)
+            {
+                l = m + 1;
+            }
+            else
+            {
+                h = m - 1;
+            }
+        }
     }
-  }
 }
 
-static void effect_position_jump(player *p, mod_channel *ch)
+static void fxPortamentoSlideUp(player *p, mod_channel *ch)
 {
-  p->mod_order = ch->param - 1;
-  p->PBreakPosition = 0;
-  p->PosJumpAssert = 1;
+    if ((p->modTick > 0) && (p->tempPeriod > 0))
+    {
+        ch->period -= ch->param;
+
+        if (ch->period < p->minPeriod)
+            ch->period = p->minPeriod;
+
+        p->tempPeriod = ch->period;
+    }
 }
 
-static void effect_set_volume(player *p, mod_channel *ch)
+static void fxPortamentoSlideDown(player *p, mod_channel *ch)
 {
-  if (!p->mod_tick)
-  {
-    if (ch->param > 64)
-      ch->param = 64;
+    if ((p->modTick > 0) && (p->tempPeriod > 0))
+    {
+        ch->period += ch->param;
 
-    p->avolume = ch->volume = ch->param;
-  }
+        if (ch->period > 856)
+            ch->period = 856;
+
+        p->tempPeriod = ch->period;
+    }
 }
 
-static void effect_pattern_break(player *p, mod_channel *ch)
+static void fxGlissando(player *p, mod_channel *ch)
 {
-  unsigned char pos = ((HI_NYBBLE(ch->param) * 10) + LO_NYBBLE(ch->param));
-
-  if (pos > 63)
-    pos = 0;
-
-  p->PBreakPosition = pos;
-  p->PosJumpAssert = 1;
+    if (p->modTick == 0)
+    {
+        if (ch->param != 0)
+            ch->glissandoSpeed = ch->param;
+    }
+    else
+    {
+        handleGlissando(p, ch);
+    }
 }
 
-static void effect_extended(player *p, mod_channel *ch)
+static void fxVibrato(player *p, mod_channel *ch)
 {
-  effecte_routines[HI_NYBBLE(ch->param)](p, ch);
+    unsigned char hiNybble;
+    unsigned char loNybble;
+
+    if (p->modTick == 0)
+    {
+        hiNybble = HI_NYBBLE(ch->param);
+        loNybble = LO_NYBBLE(ch->param);
+
+        if (hiNybble != 0)
+            ch->vibratoSpeed = hiNybble;
+
+        if (loNybble != 0)
+            ch->vibratoDepth = loNybble;
+    }
+    else
+    {
+        processVibrato(p, ch);
+    }
 }
 
-static void pt_mod_speed(player *p, int speed)
+static void fxGlissandoVolumeSlide(player *p, mod_channel *ch)
 {
-  p->mod_speed = speed;
-  p->mod_tick = 0;
+    if (p->modTick > 0)
+    {
+        handleGlissando(p, ch);
+        fxVolumeSlide(p, ch);
+    }
 }
 
-static void pt_mod_tempo(player *p, int bpm)
+static void fxVibratoVolumeSlide(player *p, mod_channel *ch)
 {
-  p->mod_bpm = bpm;
-  p->mod_samplespertick = p->tempoTimerVal / bpm;
+    if (p->modTick > 0)
+    {
+        processVibrato(p, ch);
+        fxVolumeSlide(p, ch);
+    }
+}
+
+static void fxTremolo(player *p, mod_channel *ch)
+{
+    unsigned char hiNybble;
+    unsigned char loNybble;
+
+    if (p->modTick == 0)
+    {
+        hiNybble = HI_NYBBLE(ch->param);
+        loNybble = LO_NYBBLE(ch->param);
+
+        if (hiNybble > 0)
+            ch->tremoloSpeed = hiNybble;
+
+        if (loNybble > 0)
+            ch->tremoloDepth = loNybble;
+    }
+    else
+    {
+        processTremolo(p, ch);
+    }
+}
+
+static void fxNotInUse(player *p, mod_channel *ch)
+{
+    (void)p;
+    (void)ch;
+}
+
+static void fxSampleOffset(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        if (ch->param > 0)
+            ch->offsetTemp = ch->param * 256;
+
+        ch->offset += ch->offsetTemp;
+    }
+}
+
+static void fxVolumeSlide(player *p, mod_channel *ch)
+{
+    unsigned char hiNybble;
+    unsigned char loNybble;
+
+    if (p->modTick > 0)
+    {
+        hiNybble = HI_NYBBLE(ch->param);
+        loNybble = LO_NYBBLE(ch->param);
+
+        if (hiNybble == 0)
+        {
+            ch->volume -= loNybble;
+            if (ch->volume < 0)
+                ch->volume = 0;
+
+            p->tempVolume = ch->volume;
+        }
+        else
+        {
+            ch->volume += hiNybble;
+            if (ch->volume > 64)
+                ch->volume = 64;
+
+            p->tempVolume = ch->volume;
+        }
+    }
+}
+
+static void fxPositionJump(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        p->modOrder = ch->param - 1;
+        p->PBreakPosition = 0;
+        p->PosJumpAssert = true;
+    }
+}
+
+static void fxSetVolume(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        if (ch->param > 64)
+            ch->param = 64;
+
+        ch->volume = ch->param;
+        p->tempVolume = ch->param;
+    }
+}
+
+static void fxPatternBreak(player *p, mod_channel *ch)
+{
+    unsigned char pos;
+
+    if (p->modTick == 0)
+    {
+        pos = ((HI_NYBBLE(ch->param) * 10) + LO_NYBBLE(ch->param));
+
+        if (pos > 63)
+            p->PBreakPosition = 0;
+        else
+            p->PBreakPosition = pos;
+
+        p->pattBreakBugPos = p->PBreakPosition;
+        p->pattBreakFlag = true;
+        p->PosJumpAssert = true;
+    }
+}
+
+static void fxExtended(player *p, mod_channel *ch)
+{
+    efxRoutines[HI_NYBBLE(ch->param)](p, ch);
+}
+
+static void fxExtended_FT2(player *p, mod_channel *ch)
+{
+    efxRoutines_FT2[HI_NYBBLE(ch->param)](p, ch);
+}
+
+static void modSetSpeed(player *p, unsigned char speed)
+{
+    p->modSpeed = speed;
+}
+
+static void modSetTempo(player *p, unsigned short bpm)
+{
+    p->modBPM = bpm;
+    p->samplesPerTick = p->tempoTimerVal / bpm;
+}
+
+static void fxSetTempo(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        if ((ch->param > 0) && (p->vBlankTiming || (ch->param < 32)))
+            modSetSpeed(p, ch->param);
+        else
+            modSetTempo(p, ch->param);
+    }
+}
+
+static void processEffects(player *p, mod_channel *ch)
+{
+    processInvertLoop(p, ch);
+
+    if ((!ch->command && !ch->param) == 0)
+    {
+        switch (p->source->head.format)
+        {
+        case FORMAT_NCHN:
+        case FORMAT_NNCH:
+        case FORMAT_16CN:
+        case FORMAT_32CN:
+            fxRoutines_FT2[ch->command](p, ch);
+            break;
+
+        default:
+            fxRoutines[ch->command](p, ch);
+            break;
+        }
+    }
+}
+
+static void fxPan(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        mixerSetChPan(p, ch->chanIndex, ch->param);
+    }
+}
+
+static void efxPan(player *p, mod_channel *ch)
+{
+    if (p->modTick == 0)
+    {
+        mixerSetChPan(p, ch->chanIndex, LO_NYBBLE(ch->param) * 0x11);
+    }
 }
 
 void playptmod_Stop(void *_p)
 {
-  player *p = (player *)_p;
+    player *p = (player *)_p;
+    int i;
 
-  int i;
+    mixerCutChannels(p);
 
-  mixer_cut_channels(p);
+    p->modulePlaying = false;
 
-  p->modulePlaying = 0;
+    for (i = 0; i < p->source->head.channelCount; ++i)
+    {
+        p->source->channels[i].patternLoopCounter = 0;
+        p->source->channels[i].glissandoControl = 0;
+        p->source->channels[i].vibratoControl = 0;
+        p->source->channels[i].tremoloControl = 0;
+        p->source->channels[i].fineTune = 0;
+        p->source->channels[i].invertLoopSpeed = 0;
+        p->source->channels[i].period = 0;
+        p->source->channels[i].tempPeriod = 0;
+        p->source->channels[i].offsetBugNotAdded = false;
+    }
 
-  for (i = 0; i < p->source->head.channel_count; i++)
-  {
-    p->source->channels[i].pattern_loop_times = 0;
-    p->source->channels[i].glissandoctrl = 0;
-    p->source->channels[i].vibratoctrl = 0;
-    p->source->channels[i].tremoloctrl = 0;
-    p->source->channels[i].finetune = 0;
-    p->source->channels[i].invloop_speed = 0;
-  }
+    p->tempFlags = 0;
 
-  p->aflags = 0;
+    p->pattBreakBugPos = -1;
+    p->pattBreakFlag = false;
+    p->pattDelayFlag = false;
+    p->forceEffectsOff = false;
 
-  p->PattDelayTime = 0;
-  p->PattDelayTime2 = 0;
+    p->PattDelayTime = 0;
+    p->PattDelayTime2 = 0;
 
-  p->PBreakPosition = 0;
-  p->PosJumpAssert = 0;
+    p->PBreakPosition = 0;
+    p->PosJumpAssert = false;
 }
 
-static void effect_tempo(player *p, mod_channel *ch)
+static void fetchPatternData(player *p, mod_channel *ch)
 {
-  if (!p->mod_tick)
-  {
-    if ((ch->param > 0) && (p->vsync_timing || (ch->param < 32)))
-      pt_mod_speed(p, ch->param);
-    else if (ch->param)
-      pt_mod_tempo(p, ch->param);
-  }
-}
-
-static void update_effect(player *p, mod_channel *ch)
-{
-  if (p->mod_tick)
-    UpdateInvertLoop(p, ch);
-
-  if (!(!ch->command && !ch->param))
-    effect_routines[ch->command](p, ch);
-}
-
-static void read_note(player *p, mod_channel *ch)
-{
-  modnote_t *note = &p->source->patterns[p->mod_pattern][(p->mod_row * p->source->head.channel_count) + ch->seqchannel];
-
-  if (note->sample)
-  {
-    if (ch->sample != note->sample)
-      ch->flags |= FLAG_NEWSAMPLE;
-
-    ch->sample = note->sample;
-    ch->flags |= FLAG_SAMPLE;
-    ch->finetune = p->source->samples[ch->sample - 1].finetune;
-  }
-
-  ch->command = note->command;
-  ch->param = note->param;
-
-  if (note->period)
-  {
     int tempNote;
+    modnote_t *note;
 
-    if (ch->command == 0xE)
+    note = &p->source->patterns[p->modPattern][(p->modRow * p->source->head.channelCount) + ch->chanIndex];
+    if (note->sample > 0)
     {
-      if (HI_NYBBLE(ch->param) == 0x5)
-        ch->finetune = LO_NYBBLE(ch->param);
+        if (ch->sample != note->sample)
+            ch->flags |= FLAG_NEWSAMPLE;
+
+        ch->sample = note->sample;
+        ch->flags |= FLAG_SAMPLE;
+        ch->fineTune = p->source->samples[ch->sample - 1].fineTune;
     }
 
-    tempNote = period2note(p, 0, CLAMP(note->period, p->minPeriod, p->maxPeriod));
+    ch->command = note->command;
+    ch->param = note->param;
 
-    ch->no_note = 0;
-
-    ch->tperiod = p->minPeriod == PT_MIN_PERIOD ? rawPeriodTable[(37 * ch->finetune) + tempNote] : extendedRawPeriodTable[(85 * ch->finetune) + tempNote];
-    ch->flags |= FLAG_NOTE;
-  }
-  else
-  {
-    ch->no_note = 1;
-  }
-}
-
-static void update_channel(player *p, mod_channel *ch)
-{
-  p->aflags = 0;
-
-  if (!p->mod_tick)
-  {
-    if (!p->PattDelayTime2)
-      read_note(p, ch);
-
-    if (ch->flags & FLAG_NOTE)
+    if (note->period > 0)
     {
-      ch->flags &= ~FLAG_NOTE;
-
-      if ((ch->command != 0x03) && (ch->command != 0x05))
-      {
-        ch->period = ch->tperiod;
-
-        if (ch->sample)
-          p->aflags |= AFLAG_START;
-      }
-
-      ch->tmp_aflags = 0;
-
-      if (!(ch->vibratoctrl & 4))
-        ch->vibratopos = 0;
-      if (!(ch->tremoloctrl & 4))
-        ch->tremolopos = 0;
-    }
-
-    if (ch->flags & FLAG_SAMPLE)
-    {
-      ch->flags &= ~FLAG_SAMPLE;
-
-      if (ch->sample)
-      {
-        MODULE_SAMPLE *s = &p->source->samples[ch->sample - 1];
-
-        ch->volume = s->volume;
-        ch->invloop_offset = s->loop_start;
-
-        if ((ch->command != 0x03) && (ch->command != 0x05))
+        if (ch->command == 0xE)
         {
-          ch->offset = 0;
-          ch->bug_offset_not_added = 0;
+            if (HI_NYBBLE(ch->param) == 0x5)
+                ch->fineTune = LO_NYBBLE(ch->param);
         }
 
-        if (ch->flags & FLAG_NEWSAMPLE)
-        {
-          ch->flags &= ~FLAG_NEWSAMPLE;
+        tempNote = periodToNote(p, 0, note->period);
 
-          if (ch->period && (ch->no_note || ch->command == 0x03 || ch->command == 0x05))
-            p->aflags |= AFLAG_NEW_SAMPLE;
-        }
-      }
+        ch->noNote = false;
+        ch->tempPeriod = p->minPeriod == PT_MIN_PERIOD ? rawAmigaPeriods[(ch->fineTune * 37) + tempNote] : extendedRawPeriods[(ch->fineTune * 85) + tempNote];
+        ch->flags |= FLAG_NOTE;
     }
-  }
-
-  p->aperiod = ch->period;
-  p->avolume = ch->volume;
-
-  update_effect(p, ch);
-
-  if (!(p->aflags & AFLAG_DELAY))
-  {
-    if (p->aflags & AFLAG_NEW_SAMPLE)
-    {
-      if (ch->sample)
-      {
-        MODULE_SAMPLE *s = &p->source->samples[ch->sample - 1];
-        if (s->length > 2)
-          mixer_change_ch_src(p, ch->seqchannel, &p->source->sample_data[s->offset], s->length, s->loop_start, s->loop_length, s->attribute & 1 ? 2 : 1);
-        else
-          mixer_set_ch_src(p, ch->seqchannel, NULL, 0, 0, 0, 0, 0);
-      }
-    }
-    else if (p->aflags & AFLAG_START)
-    {
-      if (ch->sample)
-      {
-        MODULE_SAMPLE *s = &p->source->samples[ch->sample - 1];
-
-        if (s->length > 2)
-        {
-          if (ch->offset)
-          {
-            mixer_set_ch_src(p, ch->seqchannel, p->source->sample_data + s->offset, s->length, s->loop_start, s->loop_length, ch->offset, s->attribute & 1 ? 2 : 1);
-
-            if (!ch->bug_offset_not_added)
-            {
-              ch->offset += ch->sample_offset_temp;
-              ch->bug_offset_not_added = 1;
-            }
-          }
-          else
-          {
-            mixer_set_ch_src(p, ch->seqchannel, p->source->sample_data + s->offset, s->length, s->loop_start, s->loop_length, 0, s->attribute & 1 ? 2 : 1);
-          }
-        }
-        else
-        {
-          mixer_set_ch_src(p, ch->seqchannel, NULL, 0, 0, 0, 0, 0);
-        }
-      }
-    }
-
-    mixer_set_ch_vol(p, ch->seqchannel, p->avolume);
-
-    if (p->aperiod > 0)
-      mixer_set_ch_freq(p, ch->seqchannel, p->minPeriod == PT_MIN_PERIOD ? p->pt_period_freq_tab[(int)p->aperiod] : p->pt_extended_period_freq_tab[(int)p->aperiod]);
     else
-      mixer_set_ch_vol(p, ch->seqchannel, 0);
-  }
-}
-
-static void next_position(player *p)
-{
-  int pos = p->mod_order + 1;
-  if (pos >= p->source->head.order_count)
-    pos = p->source->head.restart_pos;
-
-  p->mod_row = p->PBreakPosition;
-  p->mod_order = pos;
-  p->mod_pattern = CLAMP(p->source->head.order[p->mod_order], 0, 127);
-
-  p->PBreakPosition = 0;
-  p->PosJumpAssert = 0;
-
-  if (p->mod_row == 0)
-    p->loop_counter = p->order_played[p->mod_order]++;
-}
-
-static void process_tick(player *p)
-{
-  int i;
-  for (i = 0; i < p->source->head.channel_count; i++)
-    update_channel(p, p->source->channels + i);
-
-  if (p->modulePlaying)
-  {
-    if (++p->mod_tick >= p->mod_speed)
     {
-      p->mod_tick = 0;
-      p->mod_row++;
-
-      if (p->PattDelayTime)
-      {
-        p->PattDelayTime2 = p->PattDelayTime;
-        p->PattDelayTime = 0;
-      }
-
-      if (p->PattDelayTime2)
-      {
-        p->PattDelayTime2--;
-        if (p->PattDelayTime2 != 0)
-          p->mod_row--;
-      }
-
-      if (p->PBreakFlag)
-      {
-        p->PBreakFlag = 0;
-        p->mod_row = p->PBreakPosition;
-        p->PBreakPosition = 0;
-      }
-
-      if ((p->mod_row >= p->source->head.row_count) || p->PosJumpAssert)
-        next_position(p);
+        ch->noNote = true;
     }
-  }
 }
 
-static int pulsate_samples(player *p, int samples)
+static void processChannel(player *p, mod_channel *ch)
 {
-  if (p->mod_samplecounter == 0)
-  {
-    process_tick(p);
-    p->mod_samplecounter += p->mod_samplespertick;
-  }
+    MODULE_SAMPLE *s;
 
-  p->mod_samplecounter -= samples;
-  if (p->mod_samplecounter < 0)
-  {
-    int ret_samples = samples + p->mod_samplecounter;
-    p->mod_samplecounter = 0;
+    p->tempFlags = 0;
 
-    return ret_samples;
-  }
-
-  return samples;
-}
-
-void playptmod_Render(void *_p, signed short *target, int length)
-{
-  player *p = (player *)_p;
-
-  if (p->modulePlaying)
-  {
-    static const int soundBufferSamples = soundBufferSize / 4;
-
-    while (length)
+    if (p->modTick == 0)
     {
-      int igen, gen = pulsate_samples(p, length);
-      length -= gen;
+        if (p->PattDelayTime2 == 0)
+            fetchPatternData(p, ch);
 
-      while (gen)
-      {
-        if (gen >= p->vsync_samples_left)
+        if (ch->flags & FLAG_NOTE)
         {
-          igen = (int)floorf(p->vsync_samples_left);
-          gen -= igen;
-          p->vsync_samples_left -= igen;
-        }
-        else
-        {
-          igen = gen;
-          p->vsync_samples_left -= gen;
-          gen = 0;
-        }
+            ch->flags &= ~FLAG_NOTE;
 
-        p->vsync_samples_left = 0.0f;
+            if ((ch->command != 0x03) && (ch->command != 0x05))
+            {
+                ch->period = ch->tempPeriod;
 
-        while (igen)
-        {
-          int pgen = CLAMP(igen, 0, soundBufferSamples);
-          mixer_output_audio(p, target, pgen);
-          target += (pgen * 2);
-          igen -= pgen;
+                if (ch->sample > 0)
+                    p->tempFlags |= TEMPFLAG_START;
+            }
+
+            ch->tempFlagsBackup = 0;
+
+            if ((ch->vibratoControl & 4) == 0)
+                ch->vibratoPos = 0;
+
+            if ((ch->tremoloControl & 4) == 0)
+                ch->tremoloPos = 0;
         }
 
-        if (p->vsync_samples_left <= 1.0f)
-          p->vsync_samples_left += p->vsync_block_length;
-      }
+        if (ch->flags & FLAG_SAMPLE)
+        {
+            ch->flags &= ~FLAG_SAMPLE;
+
+            if (ch->sample > 0)
+            {
+                s = &p->source->samples[ch->sample - 1];
+
+                ch->volume = s->volume;
+                ch->invertLoopOffset = s->loopStart;
+
+                if ((ch->command != 0x03) && (ch->command != 0x05))
+                {
+                    ch->offset = 0;
+                    ch->offsetBugNotAdded = false;
+                }
+
+                if (ch->flags & FLAG_NEWSAMPLE)
+                {
+                    ch->flags &= ~FLAG_NEWSAMPLE;
+
+                    if ((ch->period > 0) && ((ch->noNote ==  true)
+                        || (ch->command == 0x03)
+                        || (ch->command == 0x05)))
+                        p->tempFlags |= TEMPFLAG_NEW_SAMPLE;
+                }
+            }
+        }
     }
-  }
+
+    p->tempPeriod = ch->period;
+    p->tempVolume = ch->volume;
+
+    if (p->forceEffectsOff == false)
+        processEffects(p, ch);
+
+    if (!(p->tempFlags & TEMPFLAG_DELAY))
+    {
+        if (p->tempFlags & TEMPFLAG_NEW_SAMPLE)
+        {
+            if (ch->sample > 0)
+            {
+                s = &p->source->samples[ch->sample - 1];
+
+                if (s->length > 0)
+                    mixerSwapChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, s->attribute & 1 ? 2 : 1);
+                else
+                    mixerSetChSource(p, ch->chanIndex, NULL, 0, 0, 0, 0, 0);
+            }
+        }
+        else if (p->tempFlags & TEMPFLAG_START)
+        {
+            if (ch->sample > 0)
+            {
+                s = &p->source->samples[ch->sample - 1];
+
+                if (s->length > 0)
+                {
+                    if (ch->offset > 0)
+                    {
+                        mixerSetChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, ch->offset, s->attribute & 1 ? 2 : 1);
+
+                        if (ch->offsetBugNotAdded == false)
+                        {
+                            ch->offset += ch->offsetTemp;
+                            ch->offsetBugNotAdded = true;
+                        }
+                    }
+                    else
+                    {
+                        mixerSetChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, 0, s->attribute & 1 ? 2 : 1);
+                    }
+                }
+                else
+                {
+                    mixerSetChSource(p, ch->chanIndex, NULL, 0, 0, 0, 0, 0);
+                }
+            }
+        }
+
+        mixerSetChVol(p, ch->chanIndex, p->tempVolume);
+
+        {
+            int minPeriod = (p->minPeriod == PT_MIN_PERIOD) ? 108 : p->minPeriod;
+            int maxPeriod = (p->minPeriod == PT_MIN_PERIOD) ? 907 : p->maxPeriod;
+            if ((p->tempPeriod >= minPeriod) && (p->tempPeriod <= maxPeriod))
+                mixerSetChRate(p, ch->chanIndex, p->minPeriod == PT_MIN_PERIOD ? p->frequencyTable[(int)p->tempPeriod] : p->extendedFrequencyTable[(int)p->tempPeriod]);
+            else
+                mixerSetChVol(p, ch->chanIndex, 0.0f); // arp override bugfix
+        }
+    }
+}
+
+static void nextPosition(player *p)
+{
+    p->modRow = p->PBreakPosition;
+
+    p->PBreakPosition = 0;
+    p->PosJumpAssert = false;
+
+    p->modOrder++;
+
+    if (p->modOrder >= p->source->head.orderCount)
+        p->modOrder = 0;
+
+    p->modPattern = p->source->head.order[p->modOrder];
+    if (p->modPattern >= p->source->MAX_PATTERNS)
+        p->modPattern = p->source->MAX_PATTERNS - 1;
+
+    if (p->modRow == 0)
+      p->loopCounter = p->orderPlayed[p->modOrder]++;
+}
+
+static void processTick(player *p)
+{
+    int i;
+
+    if (p->modTick == 0)
+    {
+        if (p->forceEffectsOff == true)
+        {
+            if (p->modRow != p->pattBreakBugPos)
+            {
+                p->forceEffectsOff = false;
+
+                p->pattBreakBugPos = -1;
+            }
+        }
+    }
+
+    for (i = 0; i < p->source->head.channelCount; ++i)
+    {
+        processChannel(p, p->source->channels + i);
+    }
+
+    if (p->modTick == 0)
+    {
+        if ((p->pattBreakFlag == true) && (p->pattDelayFlag == true))
+            p->forceEffectsOff = true;
+    }
+
+    p->modTick++;
+    if (p->modTick >= p->modSpeed)
+    {
+        p->modTick = 0;
+
+        p->pattBreakFlag = false;
+        p->pattDelayFlag = false;
+
+        p->modRow++;
+
+        if (p->PattDelayTime > 0)
+        {
+            p->PattDelayTime2 = p->PattDelayTime;
+            p->PattDelayTime = 0;
+        }
+
+        if (p->PattDelayTime2 > 0)
+        {
+            p->PattDelayTime2--;
+            if (p->PattDelayTime2 > 0)
+                p->modRow--;
+        }
+
+        if (p->PBreakFlag == true)
+        {
+            p->PBreakFlag = false;
+
+            p->modRow = p->PBreakPosition;
+
+            p->PBreakPosition = 0;
+        }
+
+        if ((p->modRow == p->source->head.rowCount) || (p->PosJumpAssert == true))
+            nextPosition(p);
+    }
+}
+
+static int pulsateSamples(player *p, int samples)
+{
+    if (p->sampleCounter == 0)
+    {
+        processTick(p);
+        p->sampleCounter += p->samplesPerTick;
+    }
+
+    p->sampleCounter -= samples;
+    if (p->sampleCounter < 0)
+    {
+        int retSamples = samples + p->sampleCounter;
+        p->sampleCounter = 0;
+
+        return retSamples;
+    }
+
+    return samples;
+}
+
+void playptmod_Render(void *_p, short *target, int length)
+{
+    player *p = (player *)_p;
+
+    if (p->modulePlaying == true)
+    {
+        static const int soundBufferSamples = soundBufferSize / 4;
+
+        while (length)
+        {
+            int tempSamples = CLAMP(length, 0, soundBufferSamples);
+            tempSamples = pulsateSamples(p, tempSamples);
+            length -= tempSamples;
+
+            outputAudio(p, target, tempSamples);
+            target += (tempSamples * 2);
+        }
+    }
 }
 
 void * playptmod_Create(int samplingFrequency)
 {
-  player *p = calloc(1, sizeof(player));
+    player *p = (player *) calloc(1, sizeof(player));
 
-  maketables(p, samplingFrequency);
-  p->vsync_block_length = (float)samplingFrequency / 50.0f;
+    int i, j;
+    int minPeriod, maxPeriod;
 
-  p->soundFrequency = samplingFrequency;
+    p->tempoTimerVal = (samplingFrequency * 125) / 50;
 
-  p->mixer_buffer_l = (float *)malloc(soundBufferSize * sizeof (float));
-  p->mixer_buffer_r = (float *)malloc(soundBufferSize * sizeof (float));
+    p->sinusTable = (unsigned char *)malloc(32);
+    for (i = 0; i < 32; ++i)
+        p->sinusTable[i] = (unsigned char)floorf(255.0f * sinf(((float)i * 3.141592f) / 32.0f));
 
-  p->filter_c.led = calculate_rc_coefficient((float)samplingFrequency, 3000.0f); 
-  p->filter_c.led_fb = 0.125f + 0.125f / (1.0f - p->filter_c.led);
-  p->filter_c.high = calculate_rc_coefficient((float)samplingFrequency, 30.0f);
+    p->frequencyTable = (float *)malloc(sizeof (float) * 908);
+    for (i = 108; i <= 907; i++) // 0..107 will never be looked up, junk is OK
+        p->frequencyTable[i] = (float)samplingFrequency / (7093790.0f / ((float)i * 2.0f));
 
-  p->use_led_filter = 0;
+    for (j = 0; j < 16; ++j)
+      for (i = 0; i < 85; ++i)
+        extendedRawPeriods[(j * 85) + i] = i == 84 ? 0 : npertab[i] * 8363 / finetune[j];
 
-  p->minPeriod = PT_MIN_PERIOD;
-  p->maxPeriod = PT_MAX_PERIOD;
+    for (i = 0; i < 48; ++i)
+        extendedRawPeriods[16 * 85 + i] = 0;
 
-  p->vsync_timing = 0;
-  p->pattern_counting = 0;
+    p->calculatedMaxPeriod = maxPeriod = extendedRawPeriods[8 * 85];
+    p->calculatedMinPeriod = minPeriod = extendedRawPeriods[7 * 85 + 83];
 
-  p->mixerBuffer = (signed char *)calloc(soundBufferSize, 1);
+    p->soundFrequency = samplingFrequency;
 
-  mixer_cut_channels(p);
+    p->extendedFrequencyTable = (float *)malloc(sizeof (float) * (maxPeriod + 1));
+    for (i = minPeriod; i <= maxPeriod; ++i)
+        p->extendedFrequencyTable[i] = (float)samplingFrequency / (7093790.0f / ((float)i * 2.0f));
 
-  return (void *) p;
+    p->mixBufferL = (float *)malloc(soundBufferSize * sizeof (float));
+    p->mixBufferR = (float *)malloc(soundBufferSize * sizeof (float));
+
+    p->filterC.LED = calcRcCoeff((float)samplingFrequency, 3000.0f);
+    p->filterC.LEDFb = 0.125f + 0.125f / (1.0f - p->filterC.LED);
+    p->filterC.high = calcRcCoeff((float)p->soundFrequency, 30.0f);
+
+    p->useLEDFilter = false;
+
+    mixerCutChannels(p);
+
+    return p;
 }
 
 void playptmod_Config(void *_p, int option, int value)
 {
-  player *p = (player *)_p;
-  switch (option)
-  {
-  case PTMOD_OPTION_CLAMP_PERIODS:
-    if (value)
+    player *p = (player *)_p;
+    switch (option)
     {
-      p->minPeriod = PT_MIN_PERIOD;
-      p->maxPeriod = PT_MAX_PERIOD;
-    }
-    else
-    {
-      p->minPeriod = p->calculatedMinPeriod;
-      p->maxPeriod = p->calculatedMaxPeriod;
-    }
-    break;
+    case PTMOD_OPTION_CLAMP_PERIODS:
+        if (value)
+        {
+            p->minPeriod = PT_MIN_PERIOD;
+            p->maxPeriod = PT_MAX_PERIOD;
+        }
+        else
+        {
+            p->minPeriod = p->calculatedMinPeriod;
+            p->maxPeriod = p->calculatedMaxPeriod;
+        }
+        break;
 
-  case PTMOD_OPTION_VSYNC_TIMING:
-    p->vsync_timing = value;
-    break;
-
-  case PTMOD_OPTION_PATTERN_COUNT:
-    p->pattern_counting = value;
-    break;
-  }
+    case PTMOD_OPTION_VSYNC_TIMING:
+        p->vBlankTiming = value ? true : false;
+        break;
+    }
 }
 
-void playptmod_Play(void *_p, unsigned int start_order)
+void playptmod_Play(void *_p, unsigned int startOrder)
 {
-  player *p = (player *)_p;
-  if (!p->modulePlaying && p->moduleLoaded)
-  {
+    player *p = (player *)_p;
     int i;
 
-    mixer_cut_channels(p);
-
-    for (i = 0; i < p->source->head.channel_count; i++)
+    if (!p->modulePlaying && p->moduleLoaded)
     {
-      p->source->channels[i].volume = p->source->head.vol[i];
-      p->source->channels[i].seqchannel = (char)i;
-      p->source->channels[i].pattern_loop_row = 0;
-      p->source->channels[i].pattern_loop_times = 0;
-      p->source->channels[i].glissandoctrl = 0;
-      p->source->channels[i].vibratoctrl = 0;
-      p->source->channels[i].vibratopos = 0;
-      p->source->channels[i].tremoloctrl = 0;
-      p->source->channels[i].tremolopos = 0;
-      p->source->channels[i].finetune = 0;
+        mixerCutChannels(p);
+
+        for (i = 0; i < p->source->head.channelCount; ++i)
+        {
+            p->source->channels[i].volume = 64;
+            p->source->channels[i].chanIndex = (char)i;
+            p->source->channels[i].patternLoopRow = 0;
+            p->source->channels[i].patternLoopCounter = 0;
+            p->source->channels[i].glissandoControl = 0;
+            p->source->channels[i].vibratoControl = 0;
+            p->source->channels[i].vibratoPos = 0;
+            p->source->channels[i].tremoloControl = 0;
+            p->source->channels[i].tremoloPos = 0;
+            p->source->channels[i].fineTune = 0;
+            p->source->channels[i].offsetBugNotAdded = false;
+        }
+
+        p->sampleCounter = 0;
+
+        modSetTempo(p, 125);
+        modSetSpeed(p, 6);
+
+        p->modOrder = startOrder;
+        p->modPattern = p->source->head.order[startOrder];
+        p->modRow = 0;
+        p->modTick = 0;
+
+        p->tempFlags = 0;
+        p->modTick = 0;
+
+        p->PBreakPosition = 0;
+        p->PosJumpAssert = false;
+
+        p->pattBreakBugPos = -1;
+        p->pattBreakFlag = false;
+        p->pattDelayFlag = false;
+        p->forceEffectsOff = false;
+
+        p->PattDelayTime = 0;
+        p->PattDelayTime2 = 0;
+        p->PBreakFlag = false;
+
+        memcpy(p->source->sampleData, p->source->originalSampleData, p->source->head.totalSampleSize);
+
+        memset(p->orderPlayed, 0, sizeof(p->orderPlayed));
+        p->orderPlayed[startOrder] = 1;
+
+        p->modulePlaying = true;
     }
-
-    pt_mod_tempo(p, 125);
-    pt_mod_speed(p, 6);
-
-    p->mod_order = p->mod_start_order = start_order;
-    p->loop_counter = 0;
-    p->mod_pattern = p->source->head.order[start_order];
-    p->mod_row = 0;
-    p->mod_tick = 0;
-
-    p->aflags = 0;
-    p->PattDelayTime = 0;
-    p->PattDelayTime2 = 0;
-    p->PBreakPosition = 0;
-    p->PosJumpAssert = 0;
-    p->modulePlaying = 1;
-
-    memcpy(p->source->sample_data, p->source->original_sample_data, p->source->total_sample_size);
-
-    memset(p->order_played, 0, sizeof(p->order_played));
-    p->order_played[start_order] = 1;
-  }
 }
 
 void playptmod_Free(void *_p)
 {
-  player *p = (player *)_p;
-  if (p->moduleLoaded)
-  {
+    player *p = (player *)_p;
     int i;
 
-    p->modulePlaying = 0;
-
-    for (i = 0; i < 128; i++)
+    if (p->moduleLoaded == true)
     {
-      if (p->source->patterns[i] != NULL)
-        free(p->source->patterns[i]);
+        p->modulePlaying = false;
+
+        for (i = 0; i < 100; ++i)
+        {
+            if (p->source->patterns[i] != NULL)
+                free(p->source->patterns[i]);
+        }
+
+        free(p->source->sampleData);
+        free(p->source);
+
+        p->moduleLoaded = false;
     }
 
-    if (p->source->sample_data != NULL)
-      free(p->source->sample_data);
-
-    if (p->source->original_sample_data != NULL)
-      free(p->source->original_sample_data);
-
-    if (p->source != NULL)
-      free(p->source);
-
-    p->moduleLoaded = 0;
-  }
-
-  free(p->mixerBuffer);
-  free(p->mixer_buffer_l);
-  free(p->mixer_buffer_r);
-
-  freetables(p);
-
-  free(p);
+    free(p->mixBufferL);
+    free(p->mixBufferR);
+    free(p->sinusTable);
+    free(p->frequencyTable);
 }
 
 unsigned int playptmod_LoopCounter(void *_p)
 {
-  player *p = (player *)_p;
-  return p->loop_counter;
+    player *p = (player *)_p;
+    return p->loopCounter;
 }
 
 void playptmod_GetInfo(void *_p, playptmod_info *i)
 {
-  int n, c;
-  player *p = (player *)_p;
-  int order = p->mod_order;
-  int row = p->mod_row;
-  int pattern = p->mod_pattern;
-  if ((p->mod_row >= p->source->head.row_count) || p->PosJumpAssert)
-  {
-    order++;
-    if (order >= p->source->head.order_count)
-      order = p->source->head.restart_pos;
+    int n, c;
+    player *p = (player *)_p;
+    int order = p->modOrder;
+    int row = p->modRow;
+    int pattern = p->modPattern;
+    if ((p->modRow >= p->source->head.rowCount) || p->PosJumpAssert)
+    {
+        order++;
+        if (order >= p->source->head.orderCount)
+            order = p->source->head.restartPos;
 
-    row = p->PBreakPosition;
-    pattern = CLAMP(p->source->head.order[order], 0, 127);
-  }
+        row = p->PBreakPosition;
+        pattern = CLAMP(p->source->head.order[order], 0, 127);
+    }
 
-  i->order = order;
-  i->pattern = pattern;
-  i->row = row;
-  i->speed = p->mod_speed;
-  i->tempo = p->mod_bpm;
-  for (c = 0, n = 0; n < p->source->head.channel_count; n++)
-  {
-    if (p->v[n].data) c++;
-  }
-  i->channels_playing = c;
+    i->order = order;
+    i->pattern = pattern;
+    i->row = row;
+    i->speed = p->modSpeed;
+    i->tempo = p->modBPM;
+    for (c = 0, n = 0; n < p->source->head.channelCount; ++n)
+    {
+        if (p->v[n].data) c++;
+    }
+    i->channelsPlaying = c;
 }
 
 void playptmod_Mute(void *_p, int channel, int mute)
 {
-  player *p = (player *)_p;
-  p->v[channel].mute = mute;
+    player *p = (player *)_p;
+    p->v[channel].mute = mute;
 }
 
 /* END OF FILE */

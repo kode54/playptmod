@@ -51,7 +51,6 @@ int main(int argc, const char* const* argv)
     player = playptmod_Create(SAMPLE_RATE);
 
     playptmod_Config( player, PTMOD_OPTION_CLAMP_PERIODS, 0 );
-    playptmod_Config( player, PTMOD_OPTION_PATTERN_COUNT, 1 );
 
 	if ( !playptmod_Load(player, argv[1]) ) return 1;
 
@@ -79,7 +78,7 @@ int main(int argc, const char* const* argv)
             }
 			ao_play( dev, (char*) sample_buffer, 2048 * 4 );
             playptmod_GetInfo(player, &info);
-            fprintf(stderr, "\ro: %3u - p: %3u - r: %2u - c: %2u (%2u)", info.order, info.pattern, info.row, info.channels_playing, info.channels_playing > max_channels ? max_channels = info.channels_playing : max_channels);
+            fprintf(stderr, "\ro: %3u - p: %3u - r: %2u - c: %2u (%2u)", info.order, info.pattern, info.row, info.channelsPlaying, info.channelsPlaying > max_channels ? max_channels = info.channelsPlaying : max_channels);
 		}
         fprintf(stderr, "\n");
 
