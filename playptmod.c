@@ -2557,6 +2557,9 @@ void * playptmod_Create(int samplingFrequency)
     p->calculatedMaxPeriod = maxPeriod = extendedRawPeriods[8 * 85];
     p->calculatedMinPeriod = minPeriod = extendedRawPeriods[7 * 85 + 83];
 
+    p->maxPeriod = PT_MAX_PERIOD;
+    p->minPeriod = PT_MIN_PERIOD;
+
     p->soundFrequency = samplingFrequency;
 
     p->extendedFrequencyTable = (float *)malloc(sizeof (float) * (maxPeriod + 1));
