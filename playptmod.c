@@ -1190,12 +1190,6 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
                     note->command = LO_NYBBLE(bytes[2]);
                     note->param = bytes[3];
 
-                    if ((note->command == 0x0F) && (note->param == 0x00))
-                    {
-                        note->command = 0;
-                        note->param = 0;
-                    }
-
                     note++;
                 }
             }
@@ -1234,15 +1228,6 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
                                 note->command = 0x02;
                                 note->param >>= 4;
                             }
-                        }
-                    }
-                    else if (p->source->head.format == FORMAT_NCHN ||
-                             p->source->head.format == FORMAT_NNCH)
-                    {
-                        if ((note->command == 0x0F) && (note->param == 0x00))
-                        {
-                            note->command = 0;
-                            note->param = 0;
                         }
                     }
 
@@ -2160,10 +2145,13 @@ static void fxSetTempo(player *p, mod_channel *ch)
 {
     if (p->modTick == 0)
     {
-        if ((ch->param > 0) && (p->vBlankTiming || (ch->param < 32)))
-            modSetSpeed(p, ch->param);
-        else
-            modSetTempo(p, ch->param);
+        if (ch->param > 0)
+        {
+            if (ch->param < 32 || p->vBlankTiming)
+                modSetSpeed(p, ch->param);
+            else
+                modSetTempo(p, ch->param);
+        }
     }
 }
 
