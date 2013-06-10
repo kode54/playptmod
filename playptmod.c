@@ -778,6 +778,8 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     if (!trackCount || !sampleCount || !p->source->head.rowCount || p->source->head.rowCount > 64 || !p->source->head.channelCount || p->source->head.channelCount > 32)
         return (false);
 
+    p->source->MAX_PATTERNS = 100;
+
     bufread(&p->source->head.pan, 1, 32, fmodule);
 
     for (i = 0; i < 32; i++)
