@@ -2674,6 +2674,7 @@ void playptmod_Free(void *_p)
                 free(p->source->patterns[i]);
         }
 
+        free(p->source->originalSampleData);
         free(p->source->sampleData);
         free(p->source);
 
@@ -2684,6 +2685,8 @@ void playptmod_Free(void *_p)
     free(p->mixBufferR);
     free(p->sinusTable);
     free(p->frequencyTable);
+    free(p->extendedFrequencyTable);
+    free(p);
 }
 
 unsigned int playptmod_LoopCounter(void *_p)
