@@ -2154,6 +2154,13 @@ static void fxSetTempo(player *p, mod_channel *ch)
             else
                 modSetTempo(p, ch->param);
         }
+		else
+		{
+			/* Bit of a hack, will alert caller that song has restarted */
+			p->modOrder = p->source->head.restartPos;
+			p->PBreakPosition = 0;
+			p->PosJumpAssert = true;
+		}
     }
 }
 
