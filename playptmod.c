@@ -307,7 +307,7 @@ static const unsigned char invertLoopSpeeds[16] =
     0x00, 0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0D, 0x0F, 0x13, 0x16, 0x1A, 0x20, 0x2B, 0x40, 0x80
 };
 
-static const short rawAmigaPeriods[640] =
+static const short rawAmigaPeriods[606] =
 {
     856,808,762,720,678,640,604,570,538,508,480,453,
     428,404,381,360,339,320,302,285,269,254,240,226,
@@ -357,11 +357,10 @@ static const short rawAmigaPeriods[640] =
     862,814,768,725,684,646,610,575,543,513,484,457,
     431,407,384,363,342,323,305,288,272,256,242,228,
     216,203,192,181,171,161,152,144,136,128,121,114,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
-static short extendedRawPeriods[16 * 85 + 48];
+static short extendedRawPeriods[16 * 85 + 13];
 
 static const short npertab[84] = {
     /* Octaves 6 -> 0 */
@@ -2548,7 +2547,7 @@ void * playptmod_Create(int samplingFrequency)
       for (i = 0; i < 85; ++i)
         extendedRawPeriods[(j * 85) + i] = i == 84 ? 0 : npertab[i] * 8363 / finetune[j];
 
-    for (i = 0; i < 48; ++i)
+    for (i = 0; i < 13; ++i)
         extendedRawPeriods[16 * 85 + i] = 0;
 
     p->calculatedMaxPeriod = maxPeriod = extendedRawPeriods[8 * 85];
