@@ -1,5 +1,5 @@
 /*
-** - --=playptmod v1.00 - 8bitbubsy 2010-2013=-- -
+** - --=playptmod v1.05 - 8bitbubsy 2010-2013=-- -
 ** This is the native Win32 API version, no DLL needed in you
 ** production zip/rar whatever.
 **
@@ -156,6 +156,7 @@ typedef struct
 {
     unsigned char fineTune;
     unsigned char volume;
+    int iffSize;
     int loopStart;
     int loopLength;
     int length;
@@ -201,7 +202,6 @@ typedef struct
 typedef struct
 {
     char moduleLoaded;
-    unsigned char MAX_PATTERNS;
     char *sampleData;
     char *originalSampleData;
     MODULE_HEADER head;
@@ -405,6 +405,14 @@ static void bufclose(BUF *_SrcBuf)
 {
     if (_SrcBuf != NULL)
         free(_SrcBuf);
+}
+
+static unsigned int buftell(BUF *_SrcBuf)
+{
+    if (_SrcBuf->buf > _SrcBuf->t_buf)
+        return (_SrcBuf->buf - _SrcBuf->t_buf);
+    else
+        return (_SrcBuf->t_buf - _SrcBuf->buf);
 }
 
 static void bufread(void *_DstBuf, size_t _ElementSize, size_t _Count, BUF *_SrcBuf)
@@ -777,8 +785,6 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     if (!trackCount || !sampleCount || !p->source->head.rowCount || p->source->head.rowCount > 64 || !p->source->head.channelCount || p->source->head.channelCount > 32)
         return (false);
 
-    p->source->MAX_PATTERNS = 100;
-
     bufread(&p->source->head.pan, 1, 32, fmodule);
 
     for (i = 0; i < 32; i++)
@@ -866,7 +872,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     p->source->sampleData = (char *)malloc(totalSampleSize);
     if (!p->source->sampleData)
     {
-        for (i = 0; i < 128; i++)
+        for (i = 0; i < 100; i++)
         {
             if (p->source->patterns[i] != NULL)
             {
@@ -896,7 +902,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
         free(p->source->sampleData);
         p->source->sampleData = NULL;
 
-        for (i = 0; i < 128; ++i)
+        for (i = 0; i < 100; ++i)
         {
             if (p->source->patterns[i] != NULL)
             {
@@ -988,6 +994,9 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     player *p = (player *)_p;
     unsigned char bytes[4];
     char modSig[4];
+    char *smpDat8;
+    char tempSample[131070];
+    char iffHdrFound;
     int i;
     int j;
     int pattern;
@@ -997,7 +1006,9 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     int mightBeSTK;
     int numSamples;
     int tmp;
+    unsigned int tempOffset;
     modnote_t *note;
+    MODULE_SAMPLE *s;
     BUF *fmodule;
 
     sampleOffset = 0;
@@ -1037,18 +1048,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     checkModType(&p->source->head, modSig);
     switch (p->source->head.format)
     {
-        case FORMAT_MK: p->source->MAX_PATTERNS = 64; break;
-        case FORMAT_MK2:
-        case FORMAT_FLT4:
-        case FORMAT_FLT8:
-        case FORMAT_NCHN:
-        case FORMAT_NNCH:
-        case FORMAT_16CN:
-        case FORMAT_32CN:
-                        p->source->MAX_PATTERNS = 100; break;
-
         case FORMAT_UNKNOWN:
-            p->source->MAX_PATTERNS = 64;
             mightBeSTK = true;
         break;
     }
@@ -1098,8 +1098,6 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
             }
 
             p->source->samples[i].attribute = 0;
-
-            p->source->head.totalSampleSize += p->source->samples[i].length;
         }
     }
 
@@ -1122,7 +1120,6 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
         return (false);
     }
-
 
     if (mightBeSTK == true)
     {
@@ -1147,7 +1144,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     if (p->source->head.format != FORMAT_STK)
         bufseek(fmodule, 4, SEEK_CUR);
 
-    for (pattern = 0; pattern < p->source->MAX_PATTERNS; ++pattern)
+    for (pattern = 0; pattern < 100; ++pattern)
     {
         p->source->patterns[pattern] = (modnote_t *)calloc(64 * p->source->head.channelCount, sizeof (modnote_t));
         if (p->source->patterns[pattern] == NULL)
@@ -1238,6 +1235,47 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
         }
     }
 
+    tempOffset = buftell(fmodule);
+
+    sampleOffset = 0;
+
+    numSamples = (p->source->head.format == FORMAT_STK) ? 15 : 31;   
+    for (i = 0; i < numSamples; ++i)
+    {
+        iffHdrFound = 0;
+
+        s = &p->source->samples[i];
+        s->offset = sampleOffset;
+                
+        bufread(tempSample, 1, s->length, fmodule);
+        
+        smpDat8 = tempSample;
+
+        if (s->length > 8)
+        {
+            for (j = 0; j < (s->length - 8); ++j)
+            {
+                if (memcmp(smpDat8, "8SVXVHDR", 8) == 0)
+                    iffHdrFound = 1;
+
+                if (iffHdrFound)
+                {
+                    if (memcmp(smpDat8, "BODY", 4) == 0)
+                    {
+                        s->iffSize = j + 8;
+                        s->length -= s->iffSize;
+                        break;
+                    }
+                }
+
+                ++smpDat8;
+            }
+        }
+
+        sampleOffset += s->length;
+        p->source->head.totalSampleSize += s->length;
+    }
+
     p->source->sampleData = (char *)malloc(p->source->head.totalSampleSize);
     if (p->source->sampleData == NULL)
     {
@@ -1255,24 +1293,26 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
         return (false);
     }
 
+    bufseek(fmodule, tempOffset, SEEK_SET);
+
     numSamples = (p->source->head.format == FORMAT_STK) ? 15 : 31;
     for (i = 0; i < numSamples; ++i)
     {
+        s = &p->source->samples[i];
+
+        if (s->iffSize > 0)
+            bufseek(fmodule, s->iffSize, SEEK_CUR);
+            
         if ((mightBeSTK == true) && (p->source->samples[i].loopLength > 4))
         {
-            p->source->samples[i].offset = sampleOffset;
-
             for (j = 0; j < p->source->samples[i].tmpLoopStart; ++j)
                 bufseek(fmodule, 1, SEEK_CUR);
 
-            bufread(&p->source->sampleData[sampleOffset], 1, p->source->samples[i].length - p->source->samples[i].loopStart, fmodule);
-            sampleOffset += p->source->samples[i].length;
+            bufread(&p->source->sampleData[s->offset], 1, p->source->samples[i].length - p->source->samples[i].loopStart, fmodule);
         }
         else
         {
-            p->source->samples[i].offset = sampleOffset;
-            bufread(&p->source->sampleData[sampleOffset], 1, p->source->samples[i].length, fmodule);
-            sampleOffset += p->source->samples[i].length;
+            bufread(&p->source->sampleData[s->offset], 1, p->source->samples[i].length, fmodule);
         }
     }
 
@@ -2414,8 +2454,8 @@ static void nextPosition(player *p)
         p->modOrder = 0;
 
     p->modPattern = p->source->head.order[p->modOrder];
-    if (p->modPattern >= p->source->MAX_PATTERNS)
-        p->modPattern = p->source->MAX_PATTERNS - 1;
+    if (p->modPattern > 99)
+        p->modPattern = 99;
 
     if (p->modRow == 0)
       p->loopCounter = p->orderPlayed[p->modOrder]++;
