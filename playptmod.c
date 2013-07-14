@@ -633,7 +633,7 @@ static void outputAudio(player *p, short *target, int numSamples)
                     p->v[i].index += step;
                     p->v[i].frac += p->v[i].rate;
 
-                    if (p->v[i].loopLength >= 2 * step)
+                    if (p->v[i].loopLength > (2 * step))
                     {
                         if (p->v[i].index >= p->v[i].loopEnd)
                         {
@@ -641,7 +641,7 @@ static void outputAudio(player *p, short *target, int numSamples)
                             {
                                 p->v[i].swapSampleFlag = false;
 
-                                if (p->v[i].newLoopLength < 2 * step)
+                                if (p->v[i].newLoopLength <= (2 * step))
                                 {
                                     p->v[i].data = NULL;
 
@@ -1129,7 +1129,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
             if (mightBeSTK == true)
             {
-                if (p->source->samples[i].loopLength >= 2)
+                if (p->source->samples[i].loopLength > 2)
                 {
                     tmp = p->source->samples[i].loopStart;
                     p->source->samples[i].length -= p->source->samples[i].loopStart;
@@ -1376,7 +1376,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
         if (s->iffSize > 0)
             bufseek(fmodule, s->iffSize, SEEK_CUR);
 
-        if ((mightBeSTK == true) && (p->source->samples[i].loopLength > 4))
+        if ((mightBeSTK == true) && (p->source->samples[i].loopLength > 2))
         {
             for (j = 0; j < p->source->samples[i].tmpLoopStart; ++j)
                 bufseek(fmodule, 1, SEEK_CUR);
