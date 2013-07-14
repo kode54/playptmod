@@ -248,6 +248,7 @@ typedef struct
 
 typedef struct
 {
+    int numChans;
     char pattBreakBugPos;
     char pattBreakFlag;
     char pattDelayFlag;
@@ -715,8 +716,13 @@ static void outputAudio(player *p, short *target, int numSamples)
     out = target;
 
     {
-        static const float downscale = 1.0f / (96.0f * 256.0f);
-
+        static const float downscale;
+        
+        if (p->numChans <= 4)    
+            downscale = 1.0f / (96.0f * 256.0f);
+        else
+            downscale = 1.0f / (160.0f * 256.0f);
+            
         for (i = 0; i < numSamples; ++i)
         {
             L = p->mixBufferL[i];
@@ -950,7 +956,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     if (!strncmp(buf, "M.K.", 4))
     {
         h->format = FORMAT_MK; // ProTracker v1.x
-        h->channelCount = 4;
+        p->numChans = h->channelCount = 4; 
         p->minPeriod = PT_MIN_PERIOD;
         p->maxPeriod = PT_MAX_PERIOD;
         return;
@@ -958,7 +964,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     else if (!strncmp(buf, "M!K!", 4))
     {
         h->format = FORMAT_MK2; // ProTracker v2.x (if >64 patterns)
-        h->channelCount = 4;
+        p->numChans = h->channelCount = 4;
         p->minPeriod = PT_MIN_PERIOD;
         p->maxPeriod = PT_MAX_PERIOD;
         return;
@@ -966,7 +972,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     else if (!strncmp(buf, "FLT4", 4))
     {
         h->format = FORMAT_FLT4; // StarTrekker (4 channel MODs only)
-        h->channelCount = 4;
+        p->numChans = h->channelCount = 4;
         p->minPeriod = PT_MIN_PERIOD;
         p->maxPeriod = PT_MAX_PERIOD;
         return;
@@ -974,7 +980,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     else if (!strncmp(buf, "FLT8", 4))
     {
         h->format = FORMAT_FLT8;
-        h->channelCount = 8;
+        p->numChans = h->channelCount = 8;
         p->minPeriod = PT_MIN_PERIOD;
         p->maxPeriod = PT_MAX_PERIOD;
         return;
@@ -982,7 +988,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     else if (!strncmp(buf + 1, "CHN", 3) && buf[0] >= '1' && buf[0] <= '9')
     {
         h->format = FORMAT_NCHN; // FastTracker II (1-9 channel MODs)
-        h->channelCount = buf[0] - '0';
+        p->numChans = h->channelCount = buf[0] - '0';
         p->minPeriod = 14;
         p->maxPeriod = 1712;
         return;
@@ -990,7 +996,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     else if (!strncmp(buf + 2, "CH", 2) && buf[0] >= '1' && buf[0] <= '3' && buf[1] >= '0' && buf[1] <= '9')
     {
         h->format = FORMAT_NNCH; // FastTracker II (10-32 channel MODs)
-        h->channelCount = (buf[0] - '0') * 10 + (buf[1] - '0');
+        p->numChans = h->channelCount = (buf[0] - '0') * 10 + (buf[1] - '0');
         if (h->channelCount > 32)
         {
             h->format = FORMAT_UNKNOWN;
@@ -1004,7 +1010,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     else if (!strncmp(buf, "16CN", 4))
     {
         h->format = FORMAT_16CN;
-        h->channelCount = 16;
+        p->numChans = h->channelCount = 16;
         p->minPeriod = 14;
         p->maxPeriod = 1712;
         return;
@@ -1012,7 +1018,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     else if (!strncmp(buf, "32CN", 4))
     {
         h->format = FORMAT_32CN;
-        h->channelCount = 32;
+        p->numChans = h->channelCount = 32;
         p->minPeriod = 14;
         p->maxPeriod = 1712;
         return;
@@ -1020,14 +1026,14 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     else if (!strncmp(buf, "N.T.", 4))
     {
         h->format = FORMAT_MK; // NoiseTracker 1.0, same as ProTracker v1.x (?)
-        h->channelCount = 4;
+        p->numChans = h->channelCount = 4;
         p->minPeriod = PT_MIN_PERIOD;
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
 
     h->format = FORMAT_UNKNOWN; // May be The Ultimate SoundTracker, 15 samples
-    h->channelCount = 4;
+    p->numChans = h->channelCount = 4;
     p->minPeriod = PT_MIN_PERIOD;
     p->maxPeriod = PT_MAX_PERIOD;
 }
