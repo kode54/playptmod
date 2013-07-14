@@ -802,7 +802,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
 
     bufread(&p->source->head.pan, 1, 32, fmodule);
 
-    for (i = 0; i < 32; i++)
+    for (i = 0; i < 32; ++i)
     {
         if (p->source->head.pan[i] <= 15)
         {
@@ -817,7 +817,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
         }
     }
 
-    for (i = 0; i < sampleCount; i++)
+    for (i = 0; i < sampleCount; ++i)
     {
         bufseek(fmodule, 22, SEEK_CUR);
 
@@ -887,7 +887,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     p->source->sampleData = (char *)malloc(totalSampleSize);
     if (!p->source->sampleData)
     {
-        for (i = 0; i < 256; i++)
+        for (i = 0; i < 256; ++i)
         {
             if (p->source->patterns[i] != NULL)
             {
@@ -901,13 +901,17 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
 
     bufseek(fmodule, commentOffset + commentLength, SEEK_SET);
 
-    for (i = 0; i < sampleCount; i++)
+    for (i = 0; i < sampleCount; ++i)
     {
         p->source->samples[i].offset = sampleOffset;
         bufread(&p->source->sampleData[sampleOffset], 1, p->source->samples[i].length, fmodule);
+        
         if (!(p->source->samples[i].attribute & 1))
-            for (j = (int)sampleOffset; (unsigned int)j < sampleOffset + p->source->samples[i].length; j++)
+        {
+            for (j = (int)sampleOffset; (unsigned int)j < sampleOffset + p->source->samples[i].length; ++j)
                 p->source->sampleData[(unsigned int)j] ^= 0x80;
+        }
+                
         sampleOffset += p->source->samples[i].length;
     }
 
@@ -1409,7 +1413,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
     p->source->head.rowCount = MOD_ROWS;
     memset(p->source->head.volume, 64, MAX_CHANNELS);
-    for (i = 0; i < MAX_CHANNELS; i++)
+    for (i = 0; i < MAX_CHANNELS; ++i)
         p->source->head.pan[i] = ((i + 1) & 2) ? 160 : 96;
 
     p->useLEDFilter = false;
@@ -1827,7 +1831,10 @@ static void efxInvertLoop(player *p, mod_channel *ch)
 
 static void handleGlissando(player *p, mod_channel *ch)
 {
-    int i;
+    char l;
+    char m;
+    char h;
+    
     short *tablePointer;
 
     if (p->tempPeriod > 0)
@@ -1851,25 +1858,51 @@ static void handleGlissando(player *p, mod_channel *ch)
         {
             if (p->minPeriod == PT_MIN_PERIOD)
             {
+                l = 0;
+                h = 35;
+
                 tablePointer = (short *)&rawAmigaPeriods[ch->fineTune * 37];
-                for (i = 0; i < 36; ++i)
+                while (h >= l)
                 {
-                    if (tablePointer[i] <= ch->period)
+                    m = (h + l) / 2;
+
+                    if (tablePointer[m] == ch->period)
                     {
-                        p->tempPeriod = tablePointer[i];
-                        return;
+                        p->tempPeriod = tablePointer[m];
+                        break;
+                    }
+                    else if (tablePointer[m] > ch->period)
+                    {
+                        l = m + 1;
+                    }
+                    else
+                    {
+                        h = m - 1;
                     }
                 }
             }
             else
             {
+                l = 0;
+                h = 83;
+
                 tablePointer = (short *)&extendedRawPeriods[ch->fineTune * 85];
-                for (i = 0; i < 84; ++i)
+                while (h >= l)
                 {
-                    if (tablePointer[i] <= ch->period)
+                    m = (h + l) / 2;
+
+                    if (tablePointer[m] == ch->period)
                     {
-                        p->tempPeriod = tablePointer[i];
-                        return;
+                        p->tempPeriod = tablePointer[m];
+                        break;
+                    }
+                    else if (tablePointer[m] > ch->period)
+                    {
+                        l = m + 1;
+                    }
+                    else
+                    {
+                        h = m - 1;
                     }
                 }
             }
@@ -2403,9 +2436,9 @@ static void fetchPatternData(player *p, mod_channel *ch)
 
     if (note->period > 0)
     {
-        if (ch->command == 0xE)
+        if (ch->command == 0x0E)
         {
-            if (HI_NYBBLE(ch->param) == 0x5)
+            if (HI_NYBBLE(ch->param) == 0x05)
                 ch->fineTune = LO_NYBBLE(ch->param);
         }
 
@@ -2553,7 +2586,6 @@ static void nextPosition(player *p)
     p->PosJumpAssert = false;
 
     p->modOrder++;
-
     if (p->modOrder >= p->source->head.orderCount)
         p->modOrder = 0;
 
@@ -2682,8 +2714,8 @@ void *playptmod_Create(int samplingFrequency)
         p->sinusTable[i] = (unsigned char)floorf(255.0f * sinf(((float)i * 3.141592f) / 32.0f));
 
     p->frequencyTable = (float *)malloc(sizeof (float) * 908);
-    for (i = 108; i <= 907; i++) // 0..107 will never be looked up, junk is OK
-        p->frequencyTable[i] = (float)samplingFrequency / (7093790.0f / ((float)i * 2.0f));
+    for (i = 108; i <= 907; ++i) // 0..107 will never be looked up, junk is OK
+        p->frequencyTable[i] = (float)samplingFrequency / (7093790.0f / (2.0f * (float)i));
 
     for (j = 0; j < 16; ++j)
         for (i = 0; i < 85; ++i)
@@ -2695,8 +2727,8 @@ void *playptmod_Create(int samplingFrequency)
     p->soundFrequency = samplingFrequency;
 
     p->extendedFrequencyTable = (float *)malloc(sizeof (float) * 1713);
-    for (i = 14; i <= 1712; ++i)
-        p->extendedFrequencyTable[i] = (float)samplingFrequency / (7093790.0f / ((float)i * 2.0f));
+    for (i = 14; i <= 1712; ++i) // 0..14 will never be looked up, junk is OK
+        p->extendedFrequencyTable[i] = (float)samplingFrequency / (7093790.0f / (2.0f * (float)i));
 
     p->mixBufferL = (float *)malloc(soundBufferSize * sizeof (float));
     p->mixBufferR = (float *)malloc(soundBufferSize * sizeof (float));
@@ -2839,7 +2871,7 @@ void playptmod_GetInfo(void *_p, playptmod_info *i)
 
     for (c = 0, n = 0; n < p->source->head.channelCount; ++n)
     {
-        if (p->v[n].data)c++;
+        if (p->v[n].data) c++;
     }
 
     i->channelsPlaying = c;
