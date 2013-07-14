@@ -716,7 +716,7 @@ static void outputAudio(player *p, short *target, int numSamples)
     out = target;
 
     {
-        static float downscale;
+        float downscale;
         
         if (p->numChans <= 4)    
             downscale = 1.0f / (96.0f * 256.0f);
