@@ -716,7 +716,7 @@ static void outputAudio(player *p, short *target, int numSamples)
     out = target;
 
     {
-        static const float downscale;
+        static float downscale;
         
         if (p->numChans <= 4)    
             downscale = 1.0f / (96.0f * 256.0f);
@@ -1924,98 +1924,116 @@ static void processVibrato(player *p, mod_channel *ch)
 {
     unsigned char vibratoTemp;
     int vibratoData;
+    int applyVibrato;
 
-    if (p->tempPeriod > 0)
+    applyVibrato = 1;
+    if ((p->minPeriod == PT_MIN_PERIOD) && (p->modTick == 0)) // PT/NT/UST/STK
+        applyVibrato = 0;
+    
+    if (applyVibrato)
     {
-        vibratoTemp = ch->vibratoPos >> 2;
-        vibratoTemp &= 0x1F;
-
-        switch (ch->vibratoControl & 3)
+        if (p->tempPeriod > 0)
         {
-            case 0:
-                vibratoData = p->sinusTable[vibratoTemp];
-            break;
+            vibratoTemp = ch->vibratoPos >> 2;
+            vibratoTemp &= 0x1F;
 
-            case 1:
+            switch (ch->vibratoControl & 3)
             {
-                if (ch->vibratoPos < 128)
-                    vibratoData = vibratoTemp << 3;
-                else
-                    vibratoData = 255 - (vibratoTemp << 3);
+                case 0:
+                    vibratoData = p->sinusTable[vibratoTemp];
+                break;
+
+                case 1:
+                {
+                    if (ch->vibratoPos < 128)
+                        vibratoData = vibratoTemp << 3;
+                    else
+                        vibratoData = 255 - (vibratoTemp << 3);
+                }
+                break;
+
+                default:
+                    vibratoData = 255;
+                break;
             }
-            break;
 
-            default:
-                vibratoData = 255;
-            break;
+            vibratoData = (vibratoData * ch->vibratoDepth) >> 7;
+
+            if (ch->vibratoPos < 128)
+            {
+                p->tempPeriod += (short)vibratoData;
+                if (p->tempPeriod > p->maxPeriod)
+                    p->tempPeriod = p->maxPeriod;
+            }
+            else
+            {
+                p->tempPeriod -= (short)vibratoData;
+                if (p->tempPeriod < p->minPeriod)
+                    p->tempPeriod = p->minPeriod;
+            }
         }
-
-        vibratoData = (vibratoData * ch->vibratoDepth) >> 7;
-
-        if (ch->vibratoPos < 128)
-        {
-            p->tempPeriod += (short)vibratoData;
-            if (p->tempPeriod > p->maxPeriod)
-                p->tempPeriod = p->maxPeriod;
-        }
-        else
-        {
-            p->tempPeriod -= (short)vibratoData;
-            if (p->tempPeriod < p->minPeriod)
-                p->tempPeriod = p->minPeriod;
-        }
-
-        ch->vibratoPos += (ch->vibratoSpeed << 2);
     }
+     
+    if (p->modTick > 0)
+        ch->vibratoPos += (ch->vibratoSpeed << 2);
 }
 
 static void processTremolo(player *p, mod_channel *ch)
 {
     unsigned char tremoloTemp;
     int tremoloData;
-
-    if (p->tempVolume > 0)
+    int applyTremolo;
+    
+    applyTremolo = 1;
+    if ((p->minPeriod == PT_MIN_PERIOD) && (p->modTick == 0)) // PT/NT/UST/STK
+        applyTremolo = 0;
+    
+    if (applyTremolo)
     {
-        tremoloTemp = ch->tremoloPos >> 2;
-        tremoloTemp &= 0x1F;
-
-        switch (ch->tremoloControl & 3)
+        if (p->tempVolume > 0)
         {
-            case 0:
-                tremoloData = p->sinusTable[tremoloTemp];
-            break;
+            tremoloTemp = ch->tremoloPos >> 2;
+            tremoloTemp &= 0x1F;
 
-            case 1:
+            switch (ch->tremoloControl & 3)
             {
-                if (ch->vibratoPos < 128)
-                    tremoloData = tremoloTemp << 3;
-                else
-                    tremoloData = 255 - (tremoloTemp << 3);
+                case 0:
+                    tremoloData = p->sinusTable[tremoloTemp];
+                break;
+
+                case 1:
+                {
+                    if (ch->vibratoPos < 128)
+                        tremoloData = tremoloTemp << 3;
+                    else
+                        tremoloData = 255 - (tremoloTemp << 3);
+                }
+                break;
+
+                default:
+                    tremoloData = 255;
+                break;
             }
-            break;
 
-            default:
-                tremoloData = 255;
-            break;
+            tremoloData = (tremoloData * ch->tremoloDepth) >> 6;
+
+            if (ch->tremoloPos < 128)
+            {
+                p->tempVolume += (char)tremoloData;
+                if (p->tempVolume > 64)
+                    p->tempVolume = 64;
+            }
+            else
+            {
+                p->tempVolume -= (char)tremoloData;
+                if (p->tempVolume < 0)
+                    p->tempVolume = 0;
+            }
         }
-
-        tremoloData = (tremoloData * ch->tremoloDepth) >> 6;
-
-        if (ch->tremoloPos < 128)
-        {
-            p->tempVolume += (char)tremoloData;
-            if (p->tempVolume > 64)
-                p->tempVolume = 64;
-        }
-        else
-        {
-            p->tempVolume -= (char)tremoloData;
-            if (p->tempVolume < 0)
-                p->tempVolume = 0;
-        }
-
-        ch->tremoloPos += (ch->tremoloSpeed << 2);
     }
+
+    if (p->modTick > 0)
+        ch->tremoloPos += (ch->tremoloSpeed << 2);
 }
 
 static void fxArpeggio(player *p, mod_channel *ch)
@@ -2168,15 +2186,7 @@ static void fxVibrato(player *p, mod_channel *ch)
             ch->vibratoDepth = loNybble;
     }
     
-    if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/UST/STK
-    {
-        if (p->modTick > 0)
-            processVibrato(p, ch);
-    }
-    else // FT/FT2 etc
-    {
-        processVibrato(p, ch);
-    }
+    processVibrato(p, ch);
 }
 
 static void fxGlissandoVolumeSlide(player *p, mod_channel *ch)
@@ -2213,16 +2223,8 @@ static void fxTremolo(player *p, mod_channel *ch)
         if (loNybble > 0)
             ch->tremoloDepth = loNybble;
     }
-
-    if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/UST/STK
-    {
-        if (p->modTick > 0)
-            processTremolo(p, ch);
-    }
-    else // FT/FT2 etc
-    {
-        processTremolo(p, ch);
-    }
+    
+    processTremolo(p, ch);
 }
 
 static void fxNotInUse(player *p, mod_channel *ch)
