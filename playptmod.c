@@ -1,5 +1,5 @@
 /*
-** - --=playptmod v1.05 - 8bitbubsy 2010-2013=-- -
+** - --=playptmod v1.05+ - 8bitbubsy 2010-2013=-- -
 ** This is the native Win32 API version, no DLL needed in you
 ** production zip/rar whatever.
 **
@@ -36,15 +36,15 @@
 **
 **		while (app_running)
 **		{
-**      signed short samples[1024];
+**          signed short samples[1024];
 **
 **			if (someone_pressed_a_key())
 **			{
 **				app_running = 0;
 **			}
 **
-**      playptmod_Render(p, samples, 512);
-**      // output samples to system here
+**          playptmod_Render(p, samples, 512);
+**          // output samples to system here
 **
 **			// Make sure to delay a bit here
 **		}
@@ -63,7 +63,6 @@
 */
 
 #include "playptmod.h"
-
 #include "blip_buf.h"
 
 #include <stdio.h>
@@ -74,15 +73,9 @@
 #define HI_NYBBLE(x) ((x) >> 4)
 #define LO_NYBBLE(x) ((x) & 0x0F)
 #define CLAMP(x, low, high)  (((x) > (high)) ? (high) : (((x) < (low)) ? (low) : (x)))
-#define LERP(I, F) (I[0] + F * (I[1] - I[0]))
 #define DENORMAL_OFFSET 1E-10f
-#define ZC 8
-#define OS 5
-#define SP 5
-#define NS (ZC * OS / SP)
-#define RNS 7
-#define PT_MIN_PERIOD 113
-#define PT_MAX_PERIOD 856
+#define PT_MIN_PERIOD 108
+#define PT_MAX_PERIOD 907
 #define MAX_CHANNELS 32
 #define MOD_ROWS 64
 #define MOD_SAMPLES 31
@@ -123,7 +116,7 @@ enum
 
 enum
 {
-  soundBufferSize = 2048 * 4
+    soundBufferSize = 2048 * 4
 };
 
 typedef struct modnote
@@ -206,7 +199,7 @@ typedef struct
     char *originalSampleData;
     MODULE_HEADER head;
     MODULE_SAMPLE samples[31];
-    modnote_t *patterns[100];
+    modnote_t *patterns[256];
     mod_channel channels[MAX_CHANNELS];
 } MODULE;
 
@@ -285,8 +278,6 @@ typedef struct
     unsigned char *sinusTable;
     int minPeriod;
     int maxPeriod;
-    int calculatedMinPeriod;
-    int calculatedMaxPeriod;
     int loopCounter;
     int sampleCounter;
     int samplesPerTick;
@@ -362,7 +353,8 @@ static const short rawAmigaPeriods[606] =
 
 static short extendedRawPeriods[16 * 85 + 13];
 
-static const short npertab[84] = {
+static const short npertab[84] =
+{
     /* Octaves 6 -> 0 */
     /* C    C#     D    D#     E     F    F#     G    G#     A    A#     B */
     0x6b0,0x650,0x5f4,0x5a0,0x54c,0x500,0x4b8,0x474,0x434,0x3f8,0x3c0,0x38a,
@@ -374,7 +366,8 @@ static const short npertab[84] = {
     0x01b,0x019,0x018,0x016,0x015,0x014,0x013,0x012,0x011,0x010,0x00f,0x00e
 };
 
-static const short finetune[16]={
+static const short finetune[16] =
+{
     8363,8413,8463,8529,8581,8651,8723,8757,
     7895,7941,7985,8046,8107,8169,8232,8280
 };
@@ -445,26 +438,49 @@ static void bufseek(BUF *_SrcBuf, int _Offset, int _Origin)
 
 static inline int periodToNote(player *p, char finetune, short period)
 {
-    int i;
+    char l;
+    char m;
+    char h;
+    short *tablePointer;
 
     if (p->minPeriod == PT_MIN_PERIOD)
     {
-        for (i = 0; i < 36; ++i)
+        l = 0;
+        h = 35;
+
+        tablePointer = (short *)&rawAmigaPeriods[finetune * 37];
+        while (h >= l)
         {
-            if (rawAmigaPeriods[(finetune * 37) + i] <= period)
+            m = (h + l) / 2;
+
+            if (tablePointer[m] == period)
                 break;
+            else if (tablePointer[m] > period)
+                l = m + 1;
+            else
+                h = m - 1;
         }
     }
     else
     {
-        for (i = 0; i < 84; i++)
+        l = 0;
+        h = 83;
+
+        tablePointer = (short *)&extendedRawPeriods[finetune * 85];
+        while (h >= l)
         {
-          if (extendedRawPeriods[(finetune * 85) + i] <= period)
-            break;
+            m = (h + l) / 2;
+
+            if (tablePointer[m] == period)
+                break;
+            else if (tablePointer[m] > period)
+                l = m + 1;
+            else
+                h = m - 1;
         }
     }
 
-    return (i);
+    return (m);
 }
 
 static void mixerSwapChSource(player *p, int ch, const char *src, int length, int loopStart, int loopLength, int step)
@@ -523,20 +539,25 @@ static void mixerCutChannels(player *p)
         ptm_blip_clear(&p->blep[i]);
         ptm_blip_clear(&p->blepVol[i]);
     }
+
     memset(&p->filter, 0, sizeof (p->filter));
 
     if (p->source)
+    {
         for (i = 0; i < MAX_CHANNELS; i++)
         {
             mixerSetChVol(p, i, p->source->head.volume[i]);
             mixerSetChPan(p, i, p->source->head.pan[i]);
         }
+    }
     else
+    {
         for (i = 0; i < MAX_CHANNELS; i++)
         {
             mixerSetChVol(p, i, 64);
             mixerSetChPan(p, i, (i + 1) & 2 ? 160 : 96);
         }
+    }
 }
 
 static void mixerSetChRate(player *p, int ch, float rate)
@@ -580,7 +601,6 @@ static void outputAudio(player *p, short *target, int numSamples)
                         p->v[i].frac -= 1.0f;
 
                     t_vol += ptm_blip_read_sample(&p->blepVol[i]);
-
                     t_smp += ptm_blip_read_sample(&p->blep[i]);
 
                     t_smp *= t_vol;
@@ -613,7 +633,7 @@ static void outputAudio(player *p, short *target, int numSamples)
                     p->v[i].index += step;
                     p->v[i].frac += p->v[i].rate;
 
-                    if (p->v[i].loopLength >= 4 * step)
+                    if (p->v[i].loopLength >= 2 * step)
                     {
                         if (p->v[i].index >= p->v[i].loopEnd)
                         {
@@ -621,7 +641,7 @@ static void outputAudio(player *p, short *target, int numSamples)
                             {
                                 p->v[i].swapSampleFlag = false;
 
-                                if (p->v[i].newLoopLength <= 2 * step)
+                                if (p->v[i].newLoopLength < 2 * step)
                                 {
                                     p->v[i].data = NULL;
 
@@ -647,7 +667,6 @@ static void outputAudio(player *p, short *target, int numSamples)
                         if (p->v[i].swapSampleFlag == true)
                         {
                             p->v[i].swapSampleFlag = false;
-
                             p->v[i].data = p->v[i].newData;
                             p->v[i].length = p->v[i].newLength;
                             p->v[i].loopEnd = p->v[i].newLoopEnd;
@@ -665,7 +684,6 @@ static void outputAudio(player *p, short *target, int numSamples)
         else if (p->v[i].swapSampleFlag == true)
         {
             p->v[i].swapSampleFlag = false;
-
             p->v[i].data = p->v[i].newData;
             p->v[i].length = p->v[i].newLength;
             p->v[i].loopEnd = p->v[i].newLoopEnd;
@@ -683,7 +701,6 @@ static void outputAudio(player *p, short *target, int numSamples)
                 tempSample = (float)p->blep[i].last_value;
 
                 tempVolume += ptm_blip_read_sample(&p->blepVol[i]);
-
                 tempSample += ptm_blip_read_sample(&p->blep[i]);
 
                 tempSample *= tempVolume;
@@ -766,13 +783,11 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     unsigned int trackCount, commentLength;
     unsigned char sampleCount;
     unsigned long tracksOffset, sequencesOffset, commentOffset;
-
     unsigned int totalSampleSize = 0, sampleOffset = 0;
 
     modnote_t *note = NULL;
 
     bufseek(fmodule, 24, SEEK_SET);
-
     trackCount = bufGetWordLittleEndian(fmodule);
     bufread(&p->source->head.patternCount, 1, 1, fmodule); p->source->head.patternCount++;
     bufread(&p->source->head.orderCount, 1, 1, fmodule); p->source->head.orderCount++;
@@ -816,7 +831,6 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
         p->source->samples[i].fineTune = p->source->samples[i].fineTune & 0x0F;
 
         bufread(&p->source->samples[i].volume, 1, 1, fmodule);
-
         bufread(&p->source->samples[i].attribute, 1, 1, fmodule);
 
         totalSampleSize += p->source->samples[i].length;
@@ -843,6 +857,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
             }
             return 0;
         }
+
         for (j = 0; j < p->source->head.channelCount; ++j)
         {
             int trackNumber;
@@ -872,7 +887,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     p->source->sampleData = (char *)malloc(totalSampleSize);
     if (!p->source->sampleData)
     {
-        for (i = 0; i < 100; i++)
+        for (i = 0; i < 256; i++)
         {
             if (p->source->patterns[i] != NULL)
             {
@@ -902,7 +917,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
         free(p->source->sampleData);
         p->source->sampleData = NULL;
 
-        for (i = 0; i < 100; ++i)
+        for (i = 0; i < 256; ++i)
         {
             if (p->source->patterns[i] != NULL)
             {
@@ -919,40 +934,53 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
 
     p->useLEDFilter = false;
     p->moduleLoaded = true;
+    
+    p->minPeriod = 14;
+    p->maxPeriod = 1712;
 
     return (true);
 }
 
-static void checkModType(MODULE_HEADER *h, const char *buf)
+static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
 {
     if (!strncmp(buf, "M.K.", 4))
     {
         h->format = FORMAT_MK; // ProTracker v1.x
         h->channelCount = 4;
+        p->minPeriod = PT_MIN_PERIOD;
+        p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
     else if (!strncmp(buf, "M!K!", 4))
     {
         h->format = FORMAT_MK2; // ProTracker v2.x (if >64 patterns)
         h->channelCount = 4;
+        p->minPeriod = PT_MIN_PERIOD;
+        p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
     else if (!strncmp(buf, "FLT4", 4))
     {
         h->format = FORMAT_FLT4; // StarTrekker (4 channel MODs only)
         h->channelCount = 4;
+        p->minPeriod = PT_MIN_PERIOD;
+        p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
     else if (!strncmp(buf, "FLT8", 4))
     {
         h->format = FORMAT_FLT8;
         h->channelCount = 8;
+        p->minPeriod = PT_MIN_PERIOD;
+        p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
     else if (!strncmp(buf + 1, "CHN", 3) && buf[0] >= '1' && buf[0] <= '9')
     {
         h->format = FORMAT_NCHN; // FastTracker II (1-9 channel MODs)
         h->channelCount = buf[0] - '0';
+        p->minPeriod = 14;
+        p->maxPeriod = 1712;
         return;
     }
     else if (!strncmp(buf + 2, "CH", 2) && buf[0] >= '1' && buf[0] <= '3' && buf[1] >= '0' && buf[1] <= '9')
@@ -964,29 +992,40 @@ static void checkModType(MODULE_HEADER *h, const char *buf)
             h->format = FORMAT_UNKNOWN;
             h->channelCount = 4;
         }
+
+        p->minPeriod = 14;
+        p->maxPeriod = 1712;
         return;
     }
     else if (!strncmp(buf, "16CN", 4))
     {
         h->format = FORMAT_16CN;
         h->channelCount = 16;
+        p->minPeriod = 14;
+        p->maxPeriod = 1712;
         return;
     }
     else if (!strncmp(buf, "32CN", 4))
     {
         h->format = FORMAT_32CN;
         h->channelCount = 32;
+        p->minPeriod = 14;
+        p->maxPeriod = 1712;
         return;
     }
     else if (!strncmp(buf, "N.T.", 4))
     {
         h->format = FORMAT_MK; // NoiseTracker 1.0, same as ProTracker v1.x (?)
         h->channelCount = 4;
+        p->minPeriod = PT_MIN_PERIOD;
+        p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
 
     h->format = FORMAT_UNKNOWN; // May be The Ultimate SoundTracker, 15 samples
     h->channelCount = 4;
+    p->minPeriod = PT_MIN_PERIOD;
+    p->maxPeriod = PT_MAX_PERIOD;
 }
 
 int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength)
@@ -1004,6 +1043,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     int channel;
     int sampleOffset;
     int mightBeSTK;
+    int lateVerSTKFlag;
     int numSamples;
     int tmp;
     unsigned int tempOffset;
@@ -1012,6 +1052,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     BUF *fmodule;
 
     sampleOffset = 0;
+    lateVerSTKFlag = false;
     mightBeSTK = false;
 
     p->source = (MODULE *)calloc(1, sizeof (MODULE));
@@ -1045,13 +1086,9 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     bufseek(fmodule, 0x0438, SEEK_SET);
     bufread(modSig, 1, 4, fmodule);
 
-    checkModType(&p->source->head, modSig);
-    switch (p->source->head.format)
-    {
-        case FORMAT_UNKNOWN:
-            mightBeSTK = true;
-        break;
-    }
+    checkModType(&p->source->head, p, modSig);
+    if (p->source->head.format == FORMAT_UNKNOWN)
+        mightBeSTK = true;
 
     bufseek(fmodule, 20, SEEK_SET);
 
@@ -1066,6 +1103,8 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
             bufseek(fmodule, 22, SEEK_CUR);
 
             p->source->samples[i].length = bufGetWordBigEndian(fmodule) * 2;
+            if (p->source->samples[i].length > 9999)
+                lateVerSTKFlag = true;
 
             bufread(&p->source->samples[i].fineTune, 1, 1, fmodule);
             p->source->samples[i].fineTune = p->source->samples[i].fineTune & 0x0F;
@@ -1086,7 +1125,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
             if (mightBeSTK == true)
             {
-                if (p->source->samples[i].loopLength > 4)
+                if (p->source->samples[i].loopLength >= 2)
                 {
                     tmp = p->source->samples[i].loopStart;
                     p->source->samples[i].length -= p->source->samples[i].loopStart;
@@ -1121,14 +1160,23 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
         return (false);
     }
 
+    p->source->head.initBPM = 125;
+
     if (mightBeSTK == true)
     {
         p->source->head.format = FORMAT_STK;
 
         if (p->source->head.restartPos == 120)
+        {
             p->source->head.restartPos = 125;
+        }
         else
+        {
+            if (p->source->head.restartPos > 239)
+                p->source->head.restartPos = 239;
+
             p->source->head.initBPM = (short)(1773447 / ((240 - p->source->head.restartPos) * 122));
+        }
     }
 
     for (i = 0; i < 128; ++i)
@@ -1144,7 +1192,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     if (p->source->head.format != FORMAT_STK)
         bufseek(fmodule, 4, SEEK_CUR);
 
-    for (pattern = 0; pattern < 100; ++pattern)
+    for (pattern = 0; pattern < p->source->head.patternCount; ++pattern)
     {
         p->source->patterns[pattern] = (modnote_t *)calloc(64 * p->source->head.channelCount, sizeof (modnote_t));
         if (p->source->patterns[pattern] == NULL)
@@ -1157,6 +1205,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
                     p->source->patterns[i] = NULL;
                 }
             }
+
             bufclose(fmodule);
             free(p->source);
 
@@ -1181,8 +1230,8 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
                     bufread(bytes, 1, 4, fmodule);
 
                     note->period = (LO_NYBBLE(bytes[0]) << 8) | bytes[1];
-                    if (note->period)
-                        note->period = CLAMP(note->period, p->minPeriod, p->maxPeriod);
+                    if (note->period != 0) // FLT8 is 113..856 only
+                        note->period = CLAMP(note->period, 113, 856);
 
                     note->sample = (bytes[0] & 0xF0) | HI_NYBBLE(bytes[2]);
                     note->command = LO_NYBBLE(bytes[2]);
@@ -1201,8 +1250,17 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
                     bufread(bytes, 1, 4, fmodule);
 
                     note->period = (LO_NYBBLE(bytes[0]) << 8) | bytes[1];
-                    if (note->period != 0)
-                        note->period = CLAMP(note->period, p->minPeriod, p->maxPeriod);
+                    
+                    if (p->minPeriod == PT_MIN_PERIOD)
+                    {
+                        if (note->period != 0)
+                            note->period = CLAMP(note->period, 113, 856);
+                    }
+                    else
+                    {
+                        if (note->period != 0)
+                            note->period = CLAMP(note->period, p->minPeriod, p->maxPeriod);
+                    }
 
                     note->sample = (bytes[0] & 0xF0) | HI_NYBBLE(bytes[2]);
                     note->command = LO_NYBBLE(bytes[2]);
@@ -1210,22 +1268,33 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
                     if (mightBeSTK == true)
                     {
-                        if (note->command == 0x01)
+                        if (lateVerSTKFlag == false)
                         {
-                            note->command = 0x00;
+                            if (note->command == 0x01)
+                            {
+                                note->command = 0x00;
+                            }
+                            else if (note->command == 0x02)
+                            {
+                                if (note->param & 0xF0)
+                                {
+                                    note->command = 0x02;
+                                    note->param >>= 4;
+                                }
+                                else if (note->param & 0x0F)
+                                {
+                                    note->command = 0x01;
+                                    note->param &= 0x0F;
+                                }
+                            }
                         }
-                        else if (note->command == 0x02)
+
+                        if (note->command == 0x0D)
                         {
-                            if (note->param & 0x0F)
-                            {
-                                note->command = 0x01;
-                                note->param &= 0x0F;
-                            }
-                            else if (note->param & 0xF0)
-                            {
-                                note->command = 0x02;
-                                note->param >>= 4;
-                            }
+                            if (note->param == 0)
+                                note->command = 0x0D;
+                            else
+                                note->command = 0x0A;
                         }
                     }
 
@@ -1246,9 +1315,9 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
         s = &p->source->samples[i];
         s->offset = sampleOffset;
-                
+
         bufread(tempSample, 1, s->length, fmodule);
-        
+
         smpDat8 = tempSample;
 
         if (s->length > 8)
@@ -1280,7 +1349,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     if (p->source->sampleData == NULL)
     {
         bufclose(fmodule);
-        for (pattern = 0; pattern < p->source->head.patternCount; ++i)
+        for (pattern = 0; pattern < 256; ++i)
         {
             if (p->source->patterns[pattern] != NULL)
             {
@@ -1302,7 +1371,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
         if (s->iffSize > 0)
             bufseek(fmodule, s->iffSize, SEEK_CUR);
-            
+
         if ((mightBeSTK == true) && (p->source->samples[i].loopLength > 4))
         {
             for (j = 0; j < p->source->samples[i].tmpLoopStart; ++j)
@@ -1321,7 +1390,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
     {
         bufclose(fmodule);
         free(p->source->sampleData);
-        for (pattern = 0; pattern < p->source->head.patternCount; ++i)
+        for (pattern = 0; pattern < 256; ++i)
         {
             if (p->source->patterns[pattern] != NULL)
             {
@@ -1340,7 +1409,8 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
     p->source->head.rowCount = MOD_ROWS;
     memset(p->source->head.volume, 64, MAX_CHANNELS);
-    for (i = 0; i < MAX_CHANNELS; i++) p->source->head.pan[i] = ((i + 1) & 2) ? 160 : 96;
+    for (i = 0; i < MAX_CHANNELS; i++)
+        p->source->head.pan[i] = ((i + 1) & 2) ? 160 : 96;
 
     p->useLEDFilter = false;
     p->moduleLoaded = true;
@@ -1487,7 +1557,7 @@ static effect_routine efxRoutines[16] =
 
 static effect_routine efxRoutines_FT2[16] =
 {
-    efxSetLEDFilter,
+    fxNotInUse,
     efxFinePortamentoSlideUp,
     efxFinePortamentoSlideDown,
     efxGlissandoControl,
@@ -1502,7 +1572,7 @@ static effect_routine efxRoutines_FT2[16] =
     efxNoteCut,
     efxNoteDelay,
     efxPatternDelay,
-    efxInvertLoop
+    fxNotInUse
 };
 
 static void processInvertLoop(player *p, mod_channel *ch)
@@ -1550,8 +1620,16 @@ static void efxFinePortamentoSlideUp(player *p, mod_channel *ch)
         {
             ch->period -= LO_NYBBLE(ch->param);
 
-            if (ch->period < p->minPeriod)
-                ch->period = p->minPeriod;
+            if (p->minPeriod == PT_MIN_PERIOD)
+            {
+                if (ch->period < 113)
+                    ch->period = 113;
+            }
+            else
+            {
+                if (ch->period < p->minPeriod)
+                    ch->period = p->minPeriod;
+           }
 
             p->tempPeriod = ch->period;
         }
@@ -1566,8 +1644,16 @@ static void efxFinePortamentoSlideDown(player *p, mod_channel *ch)
         {
             ch->period += LO_NYBBLE(ch->param);
 
-            if (ch->period > p->maxPeriod)
-                ch->period = p->maxPeriod;
+            if (p->minPeriod == PT_MIN_PERIOD)
+            {
+                if (ch->period > 856)
+                    ch->period = 856;
+            }
+            else
+            {
+                if (ch->period > p->maxPeriod)
+                    ch->period = p->maxPeriod;
+            }
 
             p->tempPeriod = ch->period;
         }
@@ -1829,17 +1915,15 @@ static void processVibrato(player *p, mod_channel *ch)
 
         if (ch->vibratoPos < 128)
         {
-            int clampPeriod = (p->minPeriod == PT_MIN_PERIOD ? 907 : p->maxPeriod);
             p->tempPeriod += (short)vibratoData;
-            if (p->tempPeriod > clampPeriod)
-                p->tempPeriod = clampPeriod;
+            if (p->tempPeriod > p->maxPeriod)
+                p->tempPeriod = p->maxPeriod;
         }
         else
         {
-            int clampPeriod = (p->minPeriod == PT_MIN_PERIOD ? 108 : p->minPeriod);
             p->tempPeriod -= (short)vibratoData;
-            if (p->tempPeriod < clampPeriod)
-                p->tempPeriod = clampPeriod;
+            if (p->tempPeriod < p->minPeriod)
+                p->tempPeriod = p->minPeriod;
         }
 
         ch->vibratoPos += (ch->vibratoSpeed << 2);
@@ -1921,7 +2005,7 @@ static void fxArpeggio(player *p, mod_channel *ch)
         noteToAdd = LO_NYBBLE(ch->param);
     }
 
-    if (p->minPeriod == PT_MIN_PERIOD)
+    if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/UST/STK
     {
         l = 0;
         h = 35;
@@ -1979,9 +2063,17 @@ static void fxPortamentoSlideUp(player *p, mod_channel *ch)
     {
         ch->period -= ch->param;
 
-        if (ch->period < p->minPeriod)
-            ch->period = p->minPeriod;
-
+        if (p->minPeriod == PT_MIN_PERIOD)
+        {
+            if (ch->period < 113)
+                ch->period = 113;
+        }
+        else
+        {
+            if (ch->period < p->minPeriod)
+                ch->period = p->minPeriod;
+        }
+        
         p->tempPeriod = ch->period;
     }
 }
@@ -1991,9 +2083,17 @@ static void fxPortamentoSlideDown(player *p, mod_channel *ch)
     if ((p->modTick > 0) && (p->tempPeriod > 0))
     {
         ch->period += ch->param;
-
-        if (ch->period > 856)
-            ch->period = 856;
+        
+        if (p->minPeriod == PT_MIN_PERIOD)
+        {
+            if (ch->period > 856)
+                ch->period = 856;
+        }
+        else
+        {
+            if (ch->period > p->maxPeriod)
+                ch->period = p->maxPeriod;
+        }
 
         p->tempPeriod = ch->period;
     }
@@ -2028,7 +2128,13 @@ static void fxVibrato(player *p, mod_channel *ch)
         if (loNybble != 0)
             ch->vibratoDepth = loNybble;
     }
-    else
+    
+    if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/UST/STK
+    {
+        if (p->modTick > 0)
+            processVibrato(p, ch);
+    }
+    else // FT/FT2 etc
     {
         processVibrato(p, ch);
     }
@@ -2068,7 +2174,13 @@ static void fxTremolo(player *p, mod_channel *ch)
         if (loNybble > 0)
             ch->tremoloDepth = loNybble;
     }
-    else
+
+    if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/UST/STK
+    {
+        if (p->modTick > 0)
+            processTremolo(p, ch);
+    }
+    else // FT/FT2 etc
     {
         processTremolo(p, ch);
     }
@@ -2188,18 +2300,18 @@ static void fxSetTempo(player *p, mod_channel *ch)
     {
         if (ch->param > 0)
         {
-            if (ch->param < 32 || p->vBlankTiming)
+            if ((ch->param < 32) || p->vBlankTiming)
                 modSetSpeed(p, ch->param);
             else
                 modSetTempo(p, ch->param);
         }
-		else
-		{
-			/* Bit of a hack, will alert caller that song has restarted */
-			p->modOrder = p->source->head.restartPos;
-			p->PBreakPosition = 0;
-			p->PosJumpAssert = true;
-		}
+        else
+        {
+            /* Bit of a hack, will alert caller that song has restarted */
+            p->modOrder = p->source->head.restartPos;
+            p->PBreakPosition = 0;
+            p->PosJumpAssert = true;
+        }
     }
 }
 
@@ -2211,15 +2323,15 @@ static void processEffects(player *p, mod_channel *ch)
     {
         switch (p->source->head.format)
         {
-        case FORMAT_NCHN:
-        case FORMAT_NNCH:
-        case FORMAT_16CN:
-        case FORMAT_32CN:
-            fxRoutines_FT2[ch->command](p, ch);
+            case FORMAT_NCHN:
+            case FORMAT_NNCH:
+            case FORMAT_16CN:
+            case FORMAT_32CN:
+                fxRoutines_FT2[ch->command](p, ch);
             break;
 
-        default:
-            fxRoutines[ch->command](p, ch);
+            default:
+                fxRoutines[ch->command](p, ch);
             break;
         }
     }
@@ -2228,17 +2340,13 @@ static void processEffects(player *p, mod_channel *ch)
 static void fxPan(player *p, mod_channel *ch)
 {
     if (p->modTick == 0)
-    {
-        mixerSetChPan(p, ch->chanIndex, ch->param);
-    }
+        mixerSetChPan(p, ch->chanIndex, (int)((float)ch->param * (256.0f / 255.0f)));
 }
 
 static void efxPan(player *p, mod_channel *ch)
 {
     if (p->modTick == 0)
-    {
-        mixerSetChPan(p, ch->chanIndex, LO_NYBBLE(ch->param) * 0x11);
-    }
+        mixerSetChPan(p, ch->chanIndex, (int)((float)LO_NYBBLE(ch->param) * (256.0f / 15.0f)));
 }
 
 void playptmod_Stop(void *_p)
@@ -2264,15 +2372,12 @@ void playptmod_Stop(void *_p)
     }
 
     p->tempFlags = 0;
-
     p->pattBreakBugPos = -1;
     p->pattBreakFlag = false;
     p->pattDelayFlag = false;
     p->forceEffectsOff = false;
-
     p->PattDelayTime = 0;
     p->PattDelayTime2 = 0;
-
     p->PBreakPosition = 0;
     p->PosJumpAssert = false;
 }
@@ -2307,7 +2412,7 @@ static void fetchPatternData(player *p, mod_channel *ch)
         tempNote = periodToNote(p, 0, note->period);
 
         ch->noNote = false;
-        ch->tempPeriod = p->minPeriod == PT_MIN_PERIOD ? rawAmigaPeriods[(ch->fineTune * 37) + tempNote] : extendedRawPeriods[(ch->fineTune * 85) + tempNote];
+        ch->tempPeriod = (p->minPeriod == PT_MIN_PERIOD) ? rawAmigaPeriods[(ch->fineTune * 37) + tempNote] : extendedRawPeriods[(ch->fineTune * 85) + tempNote];
         ch->flags |= FLAG_NOTE;
     }
     else
@@ -2410,10 +2515,13 @@ static void processChannel(player *p, mod_channel *ch)
                     {
                         mixerSetChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, ch->offset, s->attribute & 1 ? 2 : 1);
 
-                        if (ch->offsetBugNotAdded == false)
+                        if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/STK/UST bug only
                         {
-                            ch->offset += ch->offsetTemp;
-                            ch->offsetBugNotAdded = true;
+                            if (ch->offsetBugNotAdded == false)
+                            {
+                                ch->offset += ch->offsetTemp;
+                                ch->offsetBugNotAdded = true;
+                            }
                         }
                     }
                     else
@@ -2430,14 +2538,10 @@ static void processChannel(player *p, mod_channel *ch)
 
         mixerSetChVol(p, ch->chanIndex, p->tempVolume);
 
-        {
-            int minPeriod = (p->minPeriod == PT_MIN_PERIOD) ? 108 : p->minPeriod;
-            int maxPeriod = (p->minPeriod == PT_MIN_PERIOD) ? 907 : p->maxPeriod;
-            if ((p->tempPeriod >= minPeriod) && (p->tempPeriod <= maxPeriod))
-                mixerSetChRate(p, ch->chanIndex, p->minPeriod == PT_MIN_PERIOD ? p->frequencyTable[(int)p->tempPeriod] : p->extendedFrequencyTable[(int)p->tempPeriod]);
-            else
-                mixerSetChVol(p, ch->chanIndex, 0.0f); // arp override bugfix
-        }
+        if ((p->tempPeriod >= p->minPeriod) && (p->tempPeriod <= p->maxPeriod))
+            mixerSetChRate(p, ch->chanIndex, (p->minPeriod == PT_MIN_PERIOD) ? p->frequencyTable[(int)p->tempPeriod] : p->extendedFrequencyTable[(int)p->tempPeriod]);
+        else
+            mixerSetChVol(p, ch->chanIndex, 0.0f); // arp override bugfix
     }
 }
 
@@ -2454,39 +2558,40 @@ static void nextPosition(player *p)
         p->modOrder = 0;
 
     p->modPattern = p->source->head.order[p->modOrder];
-    if (p->modPattern > 99)
-        p->modPattern = 99;
 
     if (p->modRow == 0)
-      p->loopCounter = p->orderPlayed[p->modOrder]++;
+        p->loopCounter = p->orderPlayed[p->modOrder]++;
 }
 
 static void processTick(player *p)
 {
     int i;
 
-    if (p->modTick == 0)
+    if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/STK/UST bug only
     {
-        if (p->forceEffectsOff == true)
+        if (p->modTick == 0)
         {
-            if (p->modRow != p->pattBreakBugPos)
+            if (p->forceEffectsOff == true)
             {
-                p->forceEffectsOff = false;
-
-                p->pattBreakBugPos = -1;
+                if (p->modRow != p->pattBreakBugPos)
+                {
+                    p->forceEffectsOff = false;
+                    p->pattBreakBugPos = -1;
+                }
             }
         }
     }
 
     for (i = 0; i < p->source->head.channelCount; ++i)
-    {
         processChannel(p, p->source->channels + i);
-    }
 
-    if (p->modTick == 0)
+    if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/STK/UST bug only
     {
-        if ((p->pattBreakFlag == true) && (p->pattDelayFlag == true))
-            p->forceEffectsOff = true;
+        if (p->modTick == 0)
+        {
+            if ((p->pattBreakFlag == true) && (p->pattDelayFlag == true))
+                p->forceEffectsOff = true;
+        }
     }
 
     p->modTick++;
@@ -2515,9 +2620,7 @@ static void processTick(player *p)
         if (p->PBreakFlag == true)
         {
             p->PBreakFlag = false;
-
             p->modRow = p->PBreakPosition;
-
             p->PBreakPosition = 0;
         }
 
@@ -2566,12 +2669,11 @@ void playptmod_Render(void *_p, short *target, int length)
     }
 }
 
-void * playptmod_Create(int samplingFrequency)
+void *playptmod_Create(int samplingFrequency)
 {
     player *p = (player *) calloc(1, sizeof(player));
 
     int i, j;
-    int minPeriod, maxPeriod;
 
     p->tempoTimerVal = (samplingFrequency * 125) / 50;
 
@@ -2584,22 +2686,16 @@ void * playptmod_Create(int samplingFrequency)
         p->frequencyTable[i] = (float)samplingFrequency / (7093790.0f / ((float)i * 2.0f));
 
     for (j = 0; j < 16; ++j)
-      for (i = 0; i < 85; ++i)
-        extendedRawPeriods[(j * 85) + i] = i == 84 ? 0 : npertab[i] * 8363 / finetune[j];
+        for (i = 0; i < 85; ++i)
+            extendedRawPeriods[(j * 85) + i] = i == 84 ? 0 : npertab[i] * 8363 / finetune[j];
 
     for (i = 0; i < 13; ++i)
         extendedRawPeriods[16 * 85 + i] = 0;
 
-    p->calculatedMaxPeriod = maxPeriod = extendedRawPeriods[8 * 85];
-    p->calculatedMinPeriod = minPeriod = extendedRawPeriods[7 * 85 + 83];
-
-    p->maxPeriod = PT_MAX_PERIOD;
-    p->minPeriod = PT_MIN_PERIOD;
-
     p->soundFrequency = samplingFrequency;
 
-    p->extendedFrequencyTable = (float *)malloc(sizeof (float) * (maxPeriod + 1));
-    for (i = minPeriod; i <= maxPeriod; ++i)
+    p->extendedFrequencyTable = (float *)malloc(sizeof (float) * 1713);
+    for (i = 14; i <= 1712; ++i)
         p->extendedFrequencyTable[i] = (float)samplingFrequency / (7093790.0f / ((float)i * 2.0f));
 
     p->mixBufferL = (float *)malloc(soundBufferSize * sizeof (float));
@@ -2621,21 +2717,8 @@ void playptmod_Config(void *_p, int option, int value)
     player *p = (player *)_p;
     switch (option)
     {
-    case PTMOD_OPTION_CLAMP_PERIODS:
-        if (value)
-        {
-            p->minPeriod = PT_MIN_PERIOD;
-            p->maxPeriod = PT_MAX_PERIOD;
-        }
-        else
-        {
-            p->minPeriod = p->calculatedMinPeriod;
-            p->maxPeriod = p->calculatedMaxPeriod;
-        }
-        break;
-
-    case PTMOD_OPTION_VSYNC_TIMING:
-        p->vBlankTiming = value ? true : false;
+        case PTMOD_OPTION_VSYNC_TIMING:
+            p->vBlankTiming = value ? true : false;
         break;
     }
 }
@@ -2666,34 +2749,30 @@ void playptmod_Play(void *_p, unsigned int startOrder)
 
         p->sampleCounter = 0;
 
-        modSetTempo(p, 125);
+        modSetTempo(p, p->source->head.initBPM);
         modSetSpeed(p, 6);
 
         p->modOrder = startOrder;
         p->modPattern = p->source->head.order[startOrder];
         p->modRow = 0;
         p->modTick = 0;
-
         p->tempFlags = 0;
         p->modTick = 0;
 
         p->PBreakPosition = 0;
         p->PosJumpAssert = false;
-
         p->pattBreakBugPos = -1;
         p->pattBreakFlag = false;
         p->pattDelayFlag = false;
         p->forceEffectsOff = false;
-
         p->PattDelayTime = 0;
         p->PattDelayTime2 = 0;
         p->PBreakFlag = false;
 
         memcpy(p->source->sampleData, p->source->originalSampleData, p->source->head.totalSampleSize);
-
         memset(p->orderPlayed, 0, sizeof(p->orderPlayed));
-        p->orderPlayed[startOrder] = 1;
 
+        p->orderPlayed[startOrder] = 1;
         p->modulePlaying = true;
     }
 }
@@ -2707,7 +2786,7 @@ void playptmod_Free(void *_p)
     {
         p->modulePlaying = false;
 
-        for (i = 0; i < 100; ++i)
+        for (i = 0; i < 256; ++i)
         {
             if (p->source->patterns[i] != NULL)
                 free(p->source->patterns[i]);
@@ -2741,6 +2820,7 @@ void playptmod_GetInfo(void *_p, playptmod_info *i)
     int order = p->modOrder;
     int row = p->modRow;
     int pattern = p->modPattern;
+
     if ((p->modRow >= p->source->head.rowCount) || p->PosJumpAssert)
     {
         order++;
@@ -2748,7 +2828,7 @@ void playptmod_GetInfo(void *_p, playptmod_info *i)
             order = p->source->head.restartPos;
 
         row = p->PBreakPosition;
-        pattern = CLAMP(p->source->head.order[order], 0, 127);
+        pattern = p->source->head.order[order];
     }
 
     i->order = order;
@@ -2756,10 +2836,12 @@ void playptmod_GetInfo(void *_p, playptmod_info *i)
     i->row = row;
     i->speed = p->modSpeed;
     i->tempo = p->modBPM;
+
     for (c = 0, n = 0; n < p->source->head.channelCount; ++n)
     {
-        if (p->v[n].data) c++;
+        if (p->v[n].data)c++;
     }
+
     i->channelsPlaying = c;
 }
 
