@@ -2743,7 +2743,7 @@ void *playptmod_Create(int samplingFrequency)
 
     p->filterC.LED = calcRcCoeff((float)samplingFrequency, 3000.0f);
     p->filterC.LEDFb = 0.125f + 0.125f / (1.0f - p->filterC.LED);
-    p->filterC.high = calcRcCoeff((float)p->soundFrequency, 30.0f);
+    p->filterC.high = calcRcCoeff((float)p->soundFrequency, 5.2f);
 
     p->useLEDFilter = false;
 
