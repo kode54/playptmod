@@ -1260,16 +1260,15 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
                     bufread(bytes, 1, 4, fmodule);
 
                     note->period = (LO_NYBBLE(bytes[0]) << 8) | bytes[1];
-                    
-                    if (p->minPeriod == PT_MIN_PERIOD)
+
+                    if (note->period != 0)
                     {
-                        if (note->period != 0)
-                            note->period = CLAMP(note->period, 113, 856);
-                    }
-                    else
-                    {
-                        if (note->period != 0)
-                            note->period = CLAMP(note->period, p->minPeriod, p->maxPeriod);
+                        if ((unsigned)(note->period - 113) > (856-113))
+                        {
+                            p->minPeriod = 14;
+                            p->maxPeriod = 1712;
+                        }
+                        note->period = CLAMP(note->period, p->minPeriod, p->maxPeriod);
                     }
 
                     note->sample = (bytes[0] & 0xF0) | HI_NYBBLE(bytes[2]);
