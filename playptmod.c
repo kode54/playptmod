@@ -948,6 +948,8 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     p->minPeriod = 14;
     p->maxPeriod = 1712;
 
+    p->source->head.initBPM = 125;
+
     return (true);
 }
 
