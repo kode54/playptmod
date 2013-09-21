@@ -2430,7 +2430,7 @@ static void fetchPatternData(player *p, mod_channel *ch)
     modnote_t *note;
 
     note = &p->source->patterns[p->modPattern][(p->modRow * p->source->head.channelCount) + ch->chanIndex];
-    if (note->sample > 0)
+    if ((note->sample > 0) && (note->sample <= 32))
     {
         if (ch->sample != note->sample)
             ch->flags |= FLAG_NEWSAMPLE;
