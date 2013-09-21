@@ -2742,7 +2742,7 @@ void *playptmod_Create(int samplingFrequency)
     p->mixBufferL = (float *)malloc(soundBufferSize * sizeof (float));
     p->mixBufferR = (float *)malloc(soundBufferSize * sizeof (float));
 
-    p->filterC.LED = calcRcCoeff((float)samplingFrequency, 3000.0f);
+    p->filterC.LED = calcRcCoeff((float)samplingFrequency, 3090.0f);
     p->filterC.LEDFb = 0.125f + 0.125f / (1.0f - p->filterC.LED);
     p->filterC.high = calcRcCoeff((float)p->soundFrequency, 5.2f);
 
