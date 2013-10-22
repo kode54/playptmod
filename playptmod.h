@@ -18,7 +18,7 @@ void * playptmod_Create(int samplingFrequency);
 
 void playptmod_Config(void *p, int option, int value);
 
-int playptmod_LoadMem(void *p, const unsigned char *buf, unsigned int bufLength);
+int playptmod_LoadMem(void *p, const unsigned char *buf, unsigned long bufLength);
 int playptmod_Load(void *p, const char *filename);
 
 void playptmod_Play(void *p, unsigned int startOrder);

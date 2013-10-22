@@ -153,6 +153,7 @@ typedef struct
     int loopStart;
     int loopLength;
     int length;
+    int reallength;
     int tmpLoopStart;
     int offset;
     unsigned char attribute;
@@ -240,8 +241,8 @@ typedef struct voice_data
 
 typedef struct
 {
-    unsigned int length;
-    unsigned int remain;
+    unsigned long length;
+    unsigned long remain;
     const unsigned char *buf;
     const unsigned char *t_buf;
 } BUF;
@@ -381,7 +382,7 @@ static float calcRcCoeff(float sampleRate, float cutOffFreq)
     return ((2.0f * 3.141592f) * cutOffFreq / sampleRate);
 }
 
-static BUF *bufopen(const unsigned char *bufToCopy, unsigned int bufferSize)
+static BUF *bufopen(const unsigned char *bufToCopy, unsigned long bufferSize)
 {
     BUF *b;
 
@@ -401,7 +402,7 @@ static void bufclose(BUF *_SrcBuf)
         free(_SrcBuf);
 }
 
-static unsigned int buftell(BUF *_SrcBuf)
+static unsigned long buftell(BUF *_SrcBuf)
 {
     if (_SrcBuf->buf > _SrcBuf->t_buf)
         return (_SrcBuf->buf - _SrcBuf->t_buf);
@@ -420,7 +421,7 @@ static void bufread(void *_DstBuf, size_t _ElementSize, size_t _Count, BUF *_Src
     _SrcBuf->buf += _Count;
 }
 
-static void bufseek(BUF *_SrcBuf, int _Offset, int _Origin)
+static void bufseek(BUF *_SrcBuf, long _Offset, int _Origin)
 {
     if (_SrcBuf->buf)
     {
@@ -753,8 +754,11 @@ static void outputAudio(player *p, short *target, int numSamples)
             L = CLAMP(L, -32768.0f, 32767.0f);
             R = CLAMP(R, -32768.0f, 32767.0f);
 
-            *out++ = (short)(int)(L);
-            *out++ = (short)(int)(R);
+            if ( out )
+            {
+                *out++ = (short)(int)(L);
+                *out++ = (short)(int)(R);
+            }
         }
     }
 }
@@ -1040,7 +1044,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
     p->maxPeriod = PT_MAX_PERIOD;
 }
 
-int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength)
+int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLength)
 {
     player *p = (player *)_p;
     unsigned char bytes[4];
@@ -1326,11 +1330,23 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
         s = &p->source->samples[i];
         s->offset = sampleOffset;
-
-        bufread(tempSample, 1, s->length, fmodule);
+        
+        j = (s->length + 1) / 2 + 5 + 16;
+        
+        bufread(tempSample, 1, j, fmodule);
 
         smpDat8 = tempSample;
-
+        
+        if (s->length > 5 && memcmp(smpDat8, "ADPCM", 5) == 0)
+        {
+            s->reallength = j;
+        }
+        else
+        {
+            s->reallength = s->length;
+            bufread(tempSample + j, 1, s->length - j, fmodule);
+        }
+        
         if (s->length > 8)
         {
             for (j = 0; j < (s->length - 8); ++j)
@@ -1382,8 +1398,24 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned int bufLength
 
         if (s->iffSize > 0)
             bufseek(fmodule, s->iffSize, SEEK_CUR);
-
-        if ((mightBeSTK == true) && (p->source->samples[i].loopLength > 2))
+        
+        if (s->reallength < s->length)
+        {
+            const signed char * compressionTable = tempSample + 5;
+            const unsigned char * adpcmData = tempSample + 5 + 16;
+            int delta = 0;
+            bufread(tempSample, 1, s->reallength, fmodule);
+            for ( j = 0; j < s->length; ++j )
+            {
+                delta += compressionTable[ LO_NYBBLE( *adpcmData ) ];
+                p->source->sampleData[s->offset + j] = delta;
+                if ( ++j >= s->length ) break;
+                delta += compressionTable[ HI_NYBBLE( *adpcmData ) ];
+                p->source->sampleData[s->offset + j] = delta;
+                ++adpcmData;
+            }
+        }
+        else if ((mightBeSTK == true) && (p->source->samples[i].loopLength > 2))
         {
             for (j = 0; j < p->source->samples[i].tmpLoopStart; ++j)
                 bufseek(fmodule, 1, SEEK_CUR);
@@ -1436,7 +1468,7 @@ int playptmod_Load(void *_p, const char *filename)
     {
         int i;
         unsigned char *buffer;
-        unsigned int fileSize;
+        unsigned long fileSize;
         FILE *fileModule;
 
         fileModule = fopen(filename, "rb");
@@ -2705,7 +2737,7 @@ void playptmod_Render(void *_p, short *target, int length)
             length -= tempSamples;
 
             outputAudio(p, target, tempSamples);
-            target += (tempSamples * 2);
+            if ( target ) target += (tempSamples * 2);
         }
     }
 }
