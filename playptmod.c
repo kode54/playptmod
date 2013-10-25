@@ -68,6 +68,7 @@
 #include <stdio.h>
 #include <string.h> // memcpy()
 #include <stdlib.h> // malloc(), calloc(), free()
+#define _USE_MATH_DEFINES
 #include <math.h> // floorf(), sinf()
 
 #define HI_NYBBLE(x) ((x) >> 4)
