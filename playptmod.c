@@ -68,7 +68,6 @@
 #include <stdio.h>
 #include <string.h> // memcpy()
 #include <stdlib.h> // malloc(), calloc(), free()
-#define _USE_MATH_DEFINES
 #include <math.h> // floorf(), sinf()
 
 #define HI_NYBBLE(x) ((x) >> 4)
@@ -1334,12 +1333,13 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
         s->offset = sampleOffset;
         
         j = (s->length + 1) / 2 + 5 + 16;
+        if ( j > s->length ) j = s->length;
         
         bufread(tempSample, 1, j, fmodule);
 
         smpDat8 = tempSample;
         
-        if (s->length > 5 && memcmp(smpDat8, "ADPCM", 5) == 0)
+        if (j > 5 + 16 && memcmp(smpDat8, "ADPCM", 5) == 0)
         {
             s->reallength = j;
         }
