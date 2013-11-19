@@ -68,8 +68,11 @@
 #include <stdio.h>
 #include <string.h> // memcpy()
 #include <stdlib.h> // malloc(), calloc(), free()
-#define _USE_MATH_DEFINES
 #include <math.h> // floorf(), sinf()
+
+#ifndef M_PI
+#define M_PI 3.141592653589793
+#endif
 
 #define HI_NYBBLE(x) ((x) >> 4)
 #define LO_NYBBLE(x) ((x) & 0x0F)
