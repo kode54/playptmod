@@ -1,5 +1,5 @@
 /*
-** - --=playptmod v1.05+ - 8bitbubsy 2010-2013=-- -
+** - --=playptmod v1.06 - 8bitbubsy 2010-2014=-- -
 ** This is the native Win32 API version, no DLL needed in you
 ** production zip/rar whatever.
 **
@@ -78,8 +78,8 @@
 #define LO_NYBBLE(x) ((x) & 0x0F)
 #define CLAMP(x, low, high)  (((x) > (high)) ? (high) : (((x) < (low)) ? (low) : (x)))
 #define DENORMAL_OFFSET 1E-10f
-#define PT_MIN_PERIOD 108
-#define PT_MAX_PERIOD 907
+#define PT_MIN_PERIOD 78
+#define PT_MAX_PERIOD 937
 #define MAX_CHANNELS 32
 #define MOD_ROWS 64
 #define MOD_SAMPLES 31
@@ -445,49 +445,28 @@ static void bufseek(BUF *_SrcBuf, long _Offset, int _Origin)
 
 static inline int periodToNote(player *p, char finetune, short period)
 {
-    char l;
-    char m;
-    char h;
+    unsigned char i;
+    unsigned char maxNotes;
     short *tablePointer;
 
     if (p->minPeriod == PT_MIN_PERIOD)
     {
-        l = 0;
-        h = 35;
-
+        maxNotes = 36;
         tablePointer = (short *)&rawAmigaPeriods[finetune * 37];
-        while (h >= l)
-        {
-            m = (h + l) / 2;
-
-            if (tablePointer[m] == period)
-                break;
-            else if (tablePointer[m] > period)
-                l = m + 1;
-            else
-                h = m - 1;
-        }
     }
     else
     {
-        l = 0;
-        h = 83;
-
+        maxNotes = 84;
         tablePointer = (short *)&extendedRawPeriods[finetune * 85];
-        while (h >= l)
-        {
-            m = (h + l) / 2;
-
-            if (tablePointer[m] == period)
-                break;
-            else if (tablePointer[m] > period)
-                l = m + 1;
-            else
-                h = m - 1;
-        }
     }
 
-    return (m);
+    for (i = 0; i < maxNotes; ++i)
+    {
+        if (period >= tablePointer[i])
+            break;
+    }
+
+    return i;
 }
 
 static void mixerSwapChSource(player *p, int ch, const char *src, int length, int loopStart, int loopLength, int step)
@@ -2755,8 +2734,10 @@ void *playptmod_Create(int samplingFrequency)
     for (i = 0; i < 32; ++i)
         p->sinusTable[i] = (unsigned char)floorf(255.0f * sinf(((float)i * 3.141592f) / 32.0f));
 
-    p->frequencyTable = (float *)malloc(sizeof (float) * 908);
-    for (i = 108; i <= 907; ++i) // 0..107 will never be looked up, junk is OK
+    p->frequencyTable = (float *)malloc(sizeof (float) * 938);
+    
+    p->frequencyTable[0] = (float)samplingFrequency / 7093790.0f;
+    for (i = 1; i <= 937; ++i)
         p->frequencyTable[i] = (float)samplingFrequency / (7093790.0f / (2.0f * (float)i));
 
     for (j = 0; j < 16; ++j)
