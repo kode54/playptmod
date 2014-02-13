@@ -1,5 +1,5 @@
 /*
-** - --=playptmod v1.06 - 8bitbubsy 2010-2014=-- -
+** - --=playptmod v1.08 - 8bitbubsy 2010-2014=-- -
 ** This is the native Win32 API version, no DLL needed in you
 ** production zip/rar whatever.
 **
@@ -71,7 +71,7 @@
 #include <math.h> // floorf(), sinf()
 
 #ifndef M_PI
-#define M_PI 3.141592653589793
+#define M_PI 3.1415927f
 #endif
 
 #define HI_NYBBLE(x) ((x) >> 4)
@@ -282,7 +282,6 @@ typedef struct
     float *frequencyTable;
     float *extendedFrequencyTable;
     unsigned char *sinusTable;
-    int *panTable;
     int minPeriod;
     int maxPeriod;
     int loopCounter;
@@ -384,7 +383,7 @@ static float calcRcCoeff(float sampleRate, float cutOffFreq)
     if (cutOffFreq >= (sampleRate / 2.0f))
         return (1.0f);
 
-    return ((2.0f * 3.141592f) * cutOffFreq / sampleRate);
+    return (6.2831853f * cutOffFreq / sampleRate);
 }
 
 static BUF *bufopen(const unsigned char *bufToCopy, unsigned long bufferSize)
@@ -492,7 +491,7 @@ static void mixerSetChSource(player *p, int ch, const char *src, int length, int
 
     if (p->v[ch].index > 0)
     {
-        if (p->v[ch].loopLength > 2)
+        if (p->v[ch].loopLength >= 2)
         {
             if (p->v[ch].index >= p->v[ch].loopEnd)
                 p->v[ch].index = 0;
@@ -504,10 +503,33 @@ static void mixerSetChSource(player *p, int ch, const char *src, int length, int
     }
 }
 
+// adejr: these sin/cos approximations both use a 0...1
+// parameter range and have 'normalized' (1/2 = 0db) coefficients
+//
+// the coefficients are for lerp(x, x*x, 0.224) * sqrt(2)
+// max_error is minimized with 0.224 = 0.0013012886
+
+inline float sinApx(float x)
+{
+    x = x * (2.0f - x);
+    return (x*1.09742972f + x*x*0.31678383f);
+}
+
+inline float cosApx(float x)
+{
+    x = (1.0f - x) * (1.0f + x);
+    return (x*1.09742972f + x*x*0.31678383f);
+}
+
 static void mixerSetChPan(player *p, int ch, int pan)
 {
-    p->v[ch].panL = p->panTable[256 - pan];
-    p->v[ch].panR = p->panTable[pan];
+    float newpan;
+    if (pan == 255) pan = 256; // 100% R pan fix for 8-bit pan
+    
+    newpan = pan * (1.0f / 256.0f);
+    
+    p->v[ch].panL = (int)(256.0f * cosApx(newpan));
+    p->v[ch].panR = (int)(256.0f * sinApx(newpan));
 }
 
 static void mixerSetChVol(player *p, int ch, int vol)
@@ -632,6 +654,7 @@ static void outputAudio(player *p, short *target, int numSamples)
                                     p->v[i].data = NULL;
 
                                     continue;
+                                    //break;
                                 }
 
                                 p->v[i].data = p->v[i].newData;
@@ -657,8 +680,11 @@ static void outputAudio(player *p, short *target, int numSamples)
                             if (p->v[i].newLoopLength <= 2)
                             {
                                 p->v[i].data = NULL;
-                                break;
+                                continue;
+                                //break;
                             }
+                            
+                            p->v[i].index = 0;
                             
                             p->v[i].data = p->v[i].newData;
                             p->v[i].length = p->v[i].newLength;
@@ -669,19 +695,11 @@ static void outputAudio(player *p, short *target, int numSamples)
                         else
                         {
                             p->v[i].data = NULL;
+                            //break;
                         }
                     }
                 }
             }
-        }
-        else if (p->v[i].swapSampleFlag == true)
-        {
-            p->v[i].swapSampleFlag = false;
-            p->v[i].data = p->v[i].newData;
-            p->v[i].length = p->v[i].newLength;
-            p->v[i].loopEnd = p->v[i].newLoopEnd;
-            p->v[i].loopLength = p->v[i].newLoopLength;
-            p->v[i].step = p->v[i].newStep;
         }
 
         if ((j < numSamples) && (p->v[i].data == NULL))
@@ -809,6 +827,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
         {
             p->source->head.pan[i] -= (p->source->head.pan[i] & 8) / 8;
             p->source->head.pan[i] = (((int)p->source->head.pan[i]) * 255) / 14;
+
             p->source->head.volume[i] = 64;
         }
         else
@@ -1750,28 +1769,12 @@ static void efxTremoloControl(player *p, mod_channel *ch)
 
 static void efxKarplusStrong(player *p, mod_channel *ch)
 {
-    char *sampleLoopData;
-    unsigned int loopLength;
-    unsigned int loopLengthCounter;
-    MODULE_SAMPLE *s;
+    // WTF !
+    // KarplusStrong sucks, since some MODs
+    // used E8x for other effects instead.
 
-    if (ch->sample > 0)
-    {
-        s = &p->source->samples[ch->sample - 1];
+    (void)ch;
 
-        sampleLoopData = p->source->sampleData + s->offset + s->loopStart;
-
-        loopLength = s->loopLength - 2;
-        loopLengthCounter = loopLength;
-
-        while (loopLengthCounter--)
-        {
-            *sampleLoopData = (*sampleLoopData + *(sampleLoopData + 1)) / 2;
-            sampleLoopData++;
-        }
-
-        *sampleLoopData = (*sampleLoopData + *(sampleLoopData - loopLength)) / 2;
-    }
 }
 
 static void efxRetrigNote(player *p, mod_channel *ch)
@@ -2753,15 +2756,6 @@ void *playptmod_Create(int samplingFrequency)
     for (i = 14; i <= 1712; ++i) // 0..14 will never be looked up, junk is OK
         p->extendedFrequencyTable[i] = (float)samplingFrequency / (7093790.0f / (2.0f * (float)i));
     
-    p->panTable = (int *)malloc(sizeof (int) * 257);
-    norm = 1.0f / sinf(1.0f / (M_PI / 2));
-    for (i = 0; i <= 256; ++i)
-    {
-        float pan = (float)i * 1.0f / 256.0f;
-        
-        // -3dB pan law ( pan = sin x/half_pi )
-        p->panTable[i] = 256.0f * sinf((pan) / (M_PI / 2)) * norm;
-    }
     p->mixBufferL = (float *)malloc(soundBufferSize * sizeof (float));
     p->mixBufferR = (float *)malloc(soundBufferSize * sizeof (float));
 
@@ -2864,8 +2858,7 @@ void playptmod_Free(void *_p)
     }
 
     free(p->mixBufferL);
-    free(p->mixBufferR);
-    free(p->panTable);
+    free(p->mixBufferR);;
     free(p->sinusTable);
     free(p->frequencyTable);
     free(p->extendedFrequencyTable);
