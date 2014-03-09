@@ -1,5 +1,5 @@
 /*
-** - --=playptmod v1.08 - 8bitbubsy 2010-2014=-- -
+** - --=playptmod v1.10 - 8bitbubsy 2010-2014=-- -
 ** This is the native Win32 API version, no DLL needed in you
 ** production zip/rar whatever.
 **
@@ -62,6 +62,8 @@
 **
 */
 
+#define _USE_MATH_DEFINES // visual studio
+
 #include "playptmod.h"
 #include "blip_buf.h"
 
@@ -69,10 +71,6 @@
 #include <string.h> // memcpy()
 #include <stdlib.h> // malloc(), calloc(), free()
 #include <math.h> // floorf(), sinf()
-
-#ifndef M_PI
-#define M_PI 3.1415927f
-#endif
 
 #define HI_NYBBLE(x) ((x) >> 4)
 #define LO_NYBBLE(x) ((x) & 0x0F)
@@ -383,7 +381,7 @@ static float calcRcCoeff(float sampleRate, float cutOffFreq)
     if (cutOffFreq >= (sampleRate / 2.0f))
         return (1.0f);
 
-    return (6.2831853f * cutOffFreq / sampleRate);
+    return (2.0f * (float)(M_PI) * cutOffFreq / sampleRate);
 }
 
 static BUF *bufopen(const unsigned char *bufToCopy, unsigned long bufferSize)
@@ -474,7 +472,7 @@ static void mixerSwapChSource(player *p, int ch, const char *src, int length, in
     p->v[ch].newData = src;
     p->v[ch].newLength = length;
     p->v[ch].newLoopLength = loopLength;
-    p->v[ch].newLoopEnd = loopLength + loopStart;
+    p->v[ch].newLoopEnd = loopStart + loopLength;
     p->v[ch].newStep = step;
 }
 
@@ -489,36 +487,36 @@ static void mixerSetChSource(player *p, int ch, const char *src, int length, int
     p->v[ch].loopLength = loopLength;
     p->v[ch].step = step;
 
-    if (p->v[ch].index > 0)
+    if (offset > 0)
     {
-        if (p->v[ch].loopLength >= 2)
+        if (loopLength > (2 * step))
         {
-            if (p->v[ch].index >= p->v[ch].loopEnd)
+            if (offset >= p->v[ch].loopEnd)
                 p->v[ch].index = 0;
         }
-        else if (p->v[ch].index >= p->v[ch].length)
+        else if (offset >= length)
         {
             p->v[ch].data = NULL;
         }
     }
 }
 
-// adejr: these sin/cos approximations both use a 0...1
+// adejr: these sin/cos approximations both use a 0..1
 // parameter range and have 'normalized' (1/2 = 0db) coefficients
 //
-// the coefficients are for lerp(x, x*x, 0.224) * sqrt(2)
+// the coefficients are for LERP(x, x * x, 0.224) * sqrt(2)
 // max_error is minimized with 0.224 = 0.0013012886
 
-inline float sinApx(float x)
+static inline float sinApx(float x)
 {
     x = x * (2.0f - x);
-    return (x*1.09742972f + x*x*0.31678383f);
+    return (x * 1.09742972f + x * x * 0.31678383f);
 }
 
-inline float cosApx(float x)
+static inline float cosApx(float x)
 {
     x = (1.0f - x) * (1.0f + x);
-    return (x*1.09742972f + x*x*0.31678383f);
+    return (x * 1.09742972f + x * x * 0.31678383f);
 }
 
 static void mixerSetChPan(player *p, int ch, int pan)
@@ -652,18 +650,18 @@ static void outputAudio(player *p, short *target, int numSamples)
                                 if (p->v[i].newLoopLength <= (2 * step))
                                 {
                                     p->v[i].data = NULL;
-
                                     continue;
-                                    //break;
                                 }
-
+                                
+                                p->v[i].index = p->v[i].loopEnd - p->v[i].loopLength;
+                                
                                 p->v[i].data = p->v[i].newData;
                                 p->v[i].length = p->v[i].newLength;
                                 p->v[i].loopEnd = p->v[i].newLoopEnd;
                                 p->v[i].loopLength = p->v[i].newLoopLength;
+                                p->v[i].frac = 0.0f;
+                                
                                 step = p->v[i].step = p->v[i].newStep;
-
-                                p->v[i].index = p->v[i].loopEnd - p->v[i].loopLength;
                             }
                             else
                             {
@@ -681,7 +679,6 @@ static void outputAudio(player *p, short *target, int numSamples)
                             {
                                 p->v[i].data = NULL;
                                 continue;
-                                //break;
                             }
                             
                             p->v[i].index = 0;
@@ -690,12 +687,13 @@ static void outputAudio(player *p, short *target, int numSamples)
                             p->v[i].length = p->v[i].newLength;
                             p->v[i].loopEnd = p->v[i].newLoopEnd;
                             p->v[i].loopLength = p->v[i].newLoopLength;
+                            p->v[i].frac = 0.0f;
+    
                             step = p->v[i].step = p->v[i].newStep;
                         }
                         else
                         {
                             p->v[i].data = NULL;
-                            //break;
                         }
                     }
                 }
@@ -825,9 +823,11 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     {
         if (p->source->head.pan[i] <= 15)
         {
-            p->source->head.pan[i] -= (p->source->head.pan[i] & 8) / 8;
-            p->source->head.pan[i] = (((int)p->source->head.pan[i]) * 255) / 14;
-
+            // 8bitbubsy: WTF no, just do << 4 then if (p == 255) p = 256 in mixer
+            //p->source->head.pan[i] -= (p->source->head.pan[i] & 8) / 8;
+            //p->source->head.pan[i] = (((int)p->source->head.pan[i]) * 255) / 14;
+            
+            p->source->head.pan[i] <<= 4;
             p->source->head.volume[i] = 64;
         }
         else
@@ -1309,7 +1309,6 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
                                 else if (note->param & 0x0F)
                                 {
                                     note->command = 0x01;
-                                    note->param &= 0x0F;
                                 }
                             }
                         }
@@ -2256,6 +2255,7 @@ static void fxSampleOffset(player *p, mod_channel *ch)
             ch->offsetTemp = ch->param * 256;
 
         ch->offset += ch->offsetTemp;
+        ch->offsetBugNotAdded = false;
     }
 }
 
@@ -2396,13 +2396,13 @@ static void processEffects(player *p, mod_channel *ch)
 static void fxPan(player *p, mod_channel *ch)
 {
     if (p->modTick == 0)
-        mixerSetChPan(p, ch->chanIndex, (int)((float)ch->param * (256.0f / 255.0f)));
+        mixerSetChPan(p, ch->chanIndex, ch->param);
 }
 
 static void efxPan(player *p, mod_channel *ch)
 {
     if (p->modTick == 0)
-        mixerSetChPan(p, ch->chanIndex, (int)((float)LO_NYBBLE(ch->param) * (256.0f / 15.0f)));
+        mixerSetChPan(p, ch->chanIndex, LO_NYBBLE(ch->param) << 4);
 }
 
 void playptmod_Stop(void *_p)
@@ -2465,11 +2465,18 @@ static void fetchPatternData(player *p, mod_channel *ch)
                 ch->fineTune = LO_NYBBLE(ch->param);
         }
 
-        tempNote = periodToNote(p, 0, note->period);
-
-        ch->noNote = false;
-        ch->tempPeriod = (p->minPeriod == PT_MIN_PERIOD) ? rawAmigaPeriods[(ch->fineTune * 37) + tempNote] : extendedRawPeriods[(ch->fineTune * 85) + tempNote];
-        ch->flags |= FLAG_NOTE;
+        tempNote = periodToNote(p, 0, note->period);  
+        if ((p->minPeriod == PT_MIN_PERIOD) && (tempNote == 36)) // PT/NT/STK/UST only
+        {
+            ch->noNote = true;
+            mixerSetChSource(p, ch->chanIndex, NULL, 0, 0, 0, 0, 0);
+        }
+        else
+        {
+            ch->noNote = false;
+            ch->tempPeriod = (p->minPeriod == PT_MIN_PERIOD) ? rawAmigaPeriods[(ch->fineTune * 37) + tempNote] : extendedRawPeriods[(ch->fineTune * 85) + tempNote];
+            ch->flags |= FLAG_NOTE;
+        }
     }
     else
     {
@@ -2761,7 +2768,7 @@ void *playptmod_Create(int samplingFrequency)
 
     p->filterC.LED = calcRcCoeff((float)samplingFrequency, 3090.0f);
     p->filterC.LEDFb = 0.125f + 0.125f / (1.0f - p->filterC.LED);
-    p->filterC.high = calcRcCoeff((float)p->soundFrequency, 5.2f);
+    p->filterC.high = calcRcCoeff((float)p->soundFrequency, 30.0f); // ideal
 
     p->useLEDFilter = false;
 
