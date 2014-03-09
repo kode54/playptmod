@@ -1,5 +1,5 @@
 /*
-** - --=playptmod v1.10a - 8bitbubsy 2010-2014=-- -
+** - --=playptmod v1.10d - 8bitbubsy 2010-2014=-- -
 ** This is the native Win32 API version, no DLL needed in you
 ** production zip/rar whatever.
 **
@@ -209,14 +209,12 @@ typedef struct
 typedef struct paula_filter_state
 {
     float LED[4];
-    float high[2];
 } Filter;
 
 typedef struct paula_filter_coefficients
 {
     float LED;
     float LEDFb;
-    float high;
 } FilterC;
 
 typedef struct voice_data
@@ -571,9 +569,9 @@ static void mixerSetChRate(player *p, int ch, float rate)
     p->v[ch].rate = rate;
 }
 
-static void outputAudio(player *p, short *target, int numSamples)
+static void outputAudio(player *p, int *target, int numSamples)
 {
-    short *out;
+    int *out;
     int i;
     int j;
     int step;
@@ -727,9 +725,9 @@ static void outputAudio(player *p, short *target, int numSamples)
         float downscale;
         
         if (p->numChans <= 4)    
-            downscale = 1.0f / (128.0f * 256.0f);
+            downscale = 1.0f / 192.0f;
         else
-            downscale = 1.0f / (160.0f * 256.0f);
+            downscale = 1.0f / 256.0f;
             
         for (i = 0; i < numSamples; ++i)
         {
@@ -749,22 +747,16 @@ static void outputAudio(player *p, short *target, int numSamples)
                 R = p->filter.LED[3];
             }
 
-            L -= p->filter.high[0];
-            R -= p->filter.high[1];
-
-            p->filter.high[0] += (p->filterC.high * L + DENORMAL_OFFSET);
-            p->filter.high[1] += (p->filterC.high * R + DENORMAL_OFFSET);
-
             L *= downscale;
             R *= downscale;
 
-            L = CLAMP(L, -32768.0f, 32767.0f);
-            R = CLAMP(R, -32768.0f, 32767.0f);
+			L = CLAMP(L, INT_MIN, INT_MAX);
+			R = CLAMP(R, INT_MIN, INT_MAX);
 
             if ( out )
             {
-                *out++ = (short)(int)(L);
-                *out++ = (short)(int)(R);
+                *out++ = (int)(L);
+                *out++ = (int)(R);
             }
         }
     }
@@ -2711,7 +2703,7 @@ static int pulsateSamples(player *p, int samples)
     return samples;
 }
 
-void playptmod_Render(void *_p, short *target, int length)
+void playptmod_Render(void *_p, int *target, int length)
 {
     player *p = (player *)_p;
 
@@ -2726,6 +2718,39 @@ void playptmod_Render(void *_p, short *target, int length)
             length -= tempSamples;
 
             outputAudio(p, target, tempSamples);
+            if ( target ) target += (tempSamples * 2);
+        }
+    }
+}
+
+void playptmod_Render16(void *_p, short *target, int length)
+{
+    player *p = (player *)_p;
+
+	int tempBuffer[512];
+	int * temp = ( target ) ? tempBuffer : 0;
+
+    if (p->modulePlaying == true)
+    {
+        static const int soundBufferSamples = soundBufferSize / 4;
+
+        while (length)
+        {
+            int i, tempSamples = CLAMP(length, 0, soundBufferSamples);
+			tempSamples = CLAMP(length, 0, 256);
+            tempSamples = pulsateSamples(p, tempSamples);
+            length -= tempSamples;
+
+            outputAudio(p, temp, tempSamples);
+
+			if ( target )
+			for (i = 0; i < tempSamples * 2; ++i)
+			{
+				int s = tempBuffer[ i ] >> 8;
+				s = CLAMP(s, -32768, 32767);
+				target[ i ] = (short)s;
+			}
+
             if ( target ) target += (tempSamples * 2);
         }
     }
@@ -2768,7 +2793,6 @@ void *playptmod_Create(int samplingFrequency)
 
     p->filterC.LED = calcRcCoeff((float)samplingFrequency, 3090.0f);
     p->filterC.LEDFb = 0.125f + 0.125f / (1.0f - p->filterC.LED);
-    p->filterC.high = calcRcCoeff((float)p->soundFrequency, 30.0f); // ideal
 
     p->useLEDFilter = false;
 
