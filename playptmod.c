@@ -1,5 +1,5 @@
 /*
-** - --=playptmod v1.10 - 8bitbubsy 2010-2014=-- -
+** - --=playptmod v1.10a - 8bitbubsy 2010-2014=-- -
 ** This is the native Win32 API version, no DLL needed in you
 ** production zip/rar whatever.
 **
@@ -727,7 +727,7 @@ static void outputAudio(player *p, short *target, int numSamples)
         float downscale;
         
         if (p->numChans <= 4)    
-            downscale = 1.0f / (96.0f * 256.0f);
+            downscale = 1.0f / (112.0f * 256.0f);
         else
             downscale = 1.0f / (160.0f * 256.0f);
             
