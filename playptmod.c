@@ -2388,7 +2388,7 @@ static void processEffects(player *p, mod_channel *ch)
 static void fxPan(player *p, mod_channel *ch)
 {
     if (p->modTick == 0)
-        mixerSetChPan(p, ch->chanIndex, ch->param);
+        mixerSetChPan(p, ch->chanIndex, ch->param <= 128 ? ch->param * 2 : 128);
 }
 
 static void efxPan(player *p, mod_channel *ch)
