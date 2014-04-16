@@ -93,21 +93,6 @@
 
 enum
 {
-    FORMAT_MK,     // ProTracker 1.x
-    FORMAT_MK2,    // ProTracker 2.x (if tune has >64 patterns)
-    FORMAT_FLT4,   // StarTrekker
-    FORMAT_FLT8,
-    FORMAT_NCHN,   // FastTracker II (only 1-9 channel MODs)
-    FORMAT_NNCH,   // FastTracker II (10-32 channel MODs)
-    FORMAT_16CN,   // FastTracker II (16 channel MODs)
-    FORMAT_32CN,   // FastTracker II (32 channel MODs)
-    FORMAT_STK,    // The Ultimate SoundTracker (15 samples)
-    FORMAT_NT,     // NoiseTracker 1.0
-
-    FORMAT_MTM,    // MultiTracker
-
-    FORMAT_UNKNOWN,
-
     FLAG_NOTE = 1,
     FLAG_SAMPLE = 2,
     FLAG_NEWSAMPLE = 4,
@@ -954,6 +939,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
     p->minPeriod = 14;
     p->maxPeriod = 1712;
 
+    p->source->head.format = FORMAT_MTM;
     p->source->head.initBPM = 125;
 
     return (true);
@@ -1360,6 +1346,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
                         {
                             s->iffSize = j + 8;
                             s->length -= s->iffSize;
+                            if (s->loopStart >= s->iffSize) s->loopStart -= s->iffSize;
                             break;
                         }
                     }
@@ -1498,6 +1485,11 @@ int playptmod_Load(void *_p, const char *filename)
     }
 
     return (false);
+}
+
+int playptmod_GetFormat(void *p)
+{
+    return ((player *)p)->source->head.format;
 }
 
 static void fxArpeggio(player *p, mod_channel *ch);
@@ -2743,7 +2735,6 @@ void playptmod_Render16(void *_p, short *target, int length)
 void *playptmod_Create(int samplingFrequency)
 {
     player *p = (player *) calloc(1, sizeof(player));
-    float norm;
     
     int i, j;
 
