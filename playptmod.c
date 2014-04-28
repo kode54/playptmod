@@ -470,17 +470,15 @@ static void mixerSetChSource(player *p, int ch, const char *src, int length, int
     p->v[ch].loopLength = loopLength;
     p->v[ch].step = step;
     
-    if (offset > 0)
+    if (loopLength > (2 * step))
     {
-        if (loopLength > (2 * step))
-        {
-            if (offset >= p->v[ch].loopEnd)
-                p->v[ch].index -= p->v[ch].loopLength;
-        }
-        else if (offset >= length)
-        {
+        if (offset >= p->v[ch].loopEnd)
+            p->v[ch].index = loopStart;
+    }
+    else
+    {
+        if (offset >= length)
             p->v[ch].data = NULL;
-        }
     }
 }
 
