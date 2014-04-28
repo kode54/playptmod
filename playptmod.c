@@ -636,7 +636,8 @@ static void outputAudio(player *p, int *target, int numSamples)
                                     continue;
                                 }
                                 
-                                p->v[i].index = p->v[i].loopEnd - p->v[i].loopLength;
+                                if (p->v[i].index >= p->v[i].loopEnd)
+                                    p->v[i].index -= p->v[i].loopLength;
                                 
                                 p->v[i].data = p->v[i].newData;
                                 p->v[i].length = p->v[i].newLength;
@@ -664,7 +665,8 @@ static void outputAudio(player *p, int *target, int numSamples)
                                 continue;
                             }
                             
-                            p->v[i].index = 0;
+                            if (p->v[i].index >= p->v[i].loopEnd)
+                                p->v[i].index -= p->v[i].loopLength;
                             
                             p->v[i].data = p->v[i].newData;
                             p->v[i].length = p->v[i].newLength;
