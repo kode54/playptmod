@@ -208,10 +208,12 @@ typedef struct voice_data
     const char *data;
     int index;
     int length;
-    int loopLength;
+    int loopFlag;
+    int loopBegin;
     int loopEnd;
     int newLength;
-    int newLoopLength;
+    int newLoopFlag;
+    int newLoopBegin;
     int newLoopEnd;
     int swapSampleFlag;
     int vol;
@@ -451,33 +453,36 @@ static inline int periodToNote(player *p, char finetune, short period)
 
 static void mixerSwapChSource(player *p, int ch, const char *src, int length, int loopStart, int loopLength, int step)
 {
-    p->v[ch].swapSampleFlag = true;
-    p->v[ch].newData = src;
-    p->v[ch].newLength = length;
-    p->v[ch].newLoopLength = loopLength;
-    p->v[ch].newLoopEnd = loopStart + loopLength;
-    p->v[ch].newStep = step;
+    p->v[ch].swapSampleFlag  = true;
+    p->v[ch].newData         = src;
+    p->v[ch].newLoopFlag     = loopLength > (2 * step);
+    p->v[ch].newLength       = length;
+    p->v[ch].newLoopBegin    = loopStart;
+    p->v[ch].newLoopEnd      = loopStart + loopLength;
+    p->v[ch].newStep         = step;
 }
 
 static void mixerSetChSource(player *p, int ch, const char *src, int length, int loopStart, int loopLength, int offset, int step)
 {
     p->v[ch].swapSampleFlag = false;
-    p->v[ch].data = src;
-    p->v[ch].length = length;
-    p->v[ch].index = offset;
-    p->v[ch].frac = 0.0f;
-    p->v[ch].loopEnd = loopStart + loopLength;
-    p->v[ch].loopLength = loopLength;
-    p->v[ch].step = step;
+    p->v[ch].data           = src;
+    p->v[ch].index          = offset;
+    p->v[ch].frac           = 0.0f;
+    p->v[ch].length         = length;
+    p->v[ch].loopFlag       = loopLength > (2 * step);
+    p->v[ch].loopBegin      = loopStart;
+    p->v[ch].loopEnd        = loopStart + loopLength;
+    p->v[ch].step           = step;
     
-    if (loopLength > (2 * step))
+    // Check external 9xx usage (Set Sample Offset)
+    if (p->v[ch].loopFlag)
     {
         if (offset >= p->v[ch].loopEnd)
-            p->v[ch].index = loopStart;
+            p->v[ch].index = p->v[ch].loopBegin;
     }
     else
     {
-        if (offset >= length)
+        if (offset >= p->v[ch].length)
             p->v[ch].data = NULL;
     }
 }
@@ -552,6 +557,17 @@ static void mixerSetChRate(player *p, int ch, float rate)
     p->v[ch].rate = rate;
 }
 
+static inline void updateSampleData(Voice *v)
+{
+    v->loopBegin    = v->newLoopBegin;
+    v->loopEnd      = v->newLoopEnd;
+    v->loopFlag     = v->newLoopFlag;
+    v->data         = v->newData;
+    v->length       = v->newLength;
+    v->frac         = 0.0f;
+    v->step         = v->newStep;
+}
+
 static void outputAudio(player *p, int *target, int numSamples)
 {
     int *out;
@@ -620,7 +636,7 @@ static void outputAudio(player *p, int *target, int numSamples)
                     p->v[i].index += step;
                     p->v[i].frac += p->v[i].rate;
 
-                    if (p->v[i].loopLength > (2 * step))
+                    if (p->v[i].loopFlag)
                     {
                         if (p->v[i].index >= p->v[i].loopEnd)
                         {
@@ -628,26 +644,21 @@ static void outputAudio(player *p, int *target, int numSamples)
                             {
                                 p->v[i].swapSampleFlag = false;
 
-                                if (p->v[i].newLoopLength <= (2 * step))
+                                if (p->v[i].newLoopFlag)
                                 {
                                     p->v[i].data = NULL;
                                     continue;
                                 }
                                 
-                                if (p->v[i].index >= p->v[i].loopEnd)
-                                    p->v[i].index -= p->v[i].loopLength;
+                                updateSampleData(&p->v[i]);
                                 
-                                p->v[i].data = p->v[i].newData;
-                                p->v[i].length = p->v[i].newLength;
-                                p->v[i].loopEnd = p->v[i].newLoopEnd;
-                                p->v[i].loopLength = p->v[i].newLoopLength;
-                                p->v[i].frac = 0.0f;
-                                
-                                step = p->v[i].step = p->v[i].newStep;
+                                while (p->v[i].index >= p->v[i].loopEnd)
+                                    p->v[i].index = p->v[i].loopBegin + (p->v[i].index - p->v[i].loopEnd);
                             }
                             else
                             {
-                                p->v[i].index -= p->v[i].loopLength;
+                                while (p->v[i].index >= p->v[i].loopEnd)
+                                    p->v[i].index = p->v[i].loopBegin + (p->v[i].index - p->v[i].loopEnd);
                             }
                         }
                     }
@@ -657,22 +668,16 @@ static void outputAudio(player *p, int *target, int numSamples)
                         {
                             p->v[i].swapSampleFlag = false;
                             
-                            if (p->v[i].newLoopLength <= 2)
+                            if (p->v[i].newLoopFlag)
                             {
                                 p->v[i].data = NULL;
                                 continue;
                             }
                             
-                            if (p->v[i].index >= p->v[i].loopEnd)
-                                p->v[i].index -= p->v[i].loopLength;
-                            
-                            p->v[i].data = p->v[i].newData;
-                            p->v[i].length = p->v[i].newLength;
-                            p->v[i].loopEnd = p->v[i].newLoopEnd;
-                            p->v[i].loopLength = p->v[i].newLoopLength;
-                            p->v[i].frac = 0.0f;
-    
-                            step = p->v[i].step = p->v[i].newStep;
+                            updateSampleData(&p->v[i]);
+
+                            while (p->v[i].index >= p->v[i].loopEnd)
+                                p->v[i].index = p->v[i].loopBegin + (p->v[i].index - p->v[i].loopEnd);
                         }
                         else
                         {
