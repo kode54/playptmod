@@ -2252,7 +2252,9 @@ static void fxSampleOffset(player *p, mod_channel *ch)
             ch->offsetTemp = ch->param * 256;
 
         ch->offset += ch->offsetTemp;
-        ch->offsetBugNotAdded = false;
+        
+        if (!ch->noNote)
+            ch->offsetBugNotAdded = false;
     }
 }
 
@@ -2421,7 +2423,7 @@ void playptmod_Stop(void *_p)
         p->source->channels[i].invertLoopSpeed = 0;
         p->source->channels[i].period = 0;
         p->source->channels[i].tempPeriod = 0;
-        p->source->channels[i].offsetBugNotAdded = false;
+        p->source->channels[i].offsetBugNotAdded = true;
     }
 
     p->tempFlags = 0;
@@ -2527,7 +2529,7 @@ static void processChannel(player *p, mod_channel *ch)
                 if ((ch->command != 0x03) && (ch->command != 0x05))
                 {
                     ch->offset = 0;
-                    ch->offsetBugNotAdded = false;
+                    ch->offsetBugNotAdded = true;
                 }
 
                 if (ch->flags & FLAG_NEWSAMPLE)
@@ -2821,7 +2823,7 @@ void playptmod_Play(void *_p, unsigned int startOrder)
             p->source->channels[i].tremoloControl = 0;
             p->source->channels[i].tremoloPos = 0;
             p->source->channels[i].fineTune = 0;
-            p->source->channels[i].offsetBugNotAdded = false;
+            p->source->channels[i].offsetBugNotAdded = true;
         }
 
         p->sampleCounter = 0;
