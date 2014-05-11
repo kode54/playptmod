@@ -87,10 +87,6 @@
 #define false 0
 #endif
 
-#ifdef _MSC_VER
-#define inline __forceinline
-#endif
-
 enum
 {
     FLAG_NOTE = 1,
@@ -206,16 +202,16 @@ typedef struct voice_data
 {
     const char *newData;
     const char *data;
-    int index;
+    char swapSampleFlag;
+    char loopFlag;
     int length;
-    int loopFlag;
     int loopBegin;
     int loopEnd;
+    char newLoopFlag;
     int newLength;
-    int newLoopFlag;
     int newLoopBegin;
     int newLoopEnd;
-    int swapSampleFlag;
+    int index;
     int vol;
     int panL;
     int panR;
@@ -344,7 +340,7 @@ static short extendedRawPeriods[16 * 85 + 14];
 
 static const short npertab[84] =
 {
-    /* Octaves 6 -> 0 */
+    /* Octaves 0 -> 6 */
     /* C    C#     D    D#     E     F    F#     G    G#     A    A#     B */
     0x6b0,0x650,0x5f4,0x5a0,0x54c,0x500,0x4b8,0x474,0x434,0x3f8,0x3c0,0x38a,
     0x358,0x328,0x2fa,0x2d0,0x2a6,0x280,0x25c,0x23a,0x21a,0x1fc,0x1e0,0x1c5,
@@ -557,17 +553,6 @@ static void mixerSetChRate(player *p, int ch, float rate)
     p->v[ch].rate = rate;
 }
 
-static inline void updateSampleData(Voice *v)
-{
-    v->loopBegin    = v->newLoopBegin;
-    v->loopEnd      = v->newLoopEnd;
-    v->loopFlag     = v->newLoopFlag;
-    v->data         = v->newData;
-    v->length       = v->newLength;
-    v->frac         = 0.0f;
-    v->step         = v->newStep;
-}
-
 static void outputAudio(player *p, int *target, int numSamples)
 {
     int *out;
@@ -619,14 +604,14 @@ static void outputAudio(player *p, int *target, int numSamples)
 
                 if (tempSample != p->blep[i].last_value)
                 {
-                    float delta = (float)(tempSample - p->blep[i].last_value);
+                    int delta = tempSample - p->blep[i].last_value;
                     p->blep[i].last_value = tempSample;
                     ptm_blip_add_delta(&p->blep[i], p->v[i].frac, delta);
                 }
 
                 if (tempVolume != p->blepVol[i].last_value)
                 {
-                    float delta = (float)(tempVolume - p->blepVol[i].last_value);
+                    int delta = tempVolume - p->blepVol[i].last_value;
                     p->blepVol[i].last_value = tempVolume;
                     ptm_blip_add_delta(&p->blepVol[i], 0, delta);
                 }
@@ -644,13 +629,19 @@ static void outputAudio(player *p, int *target, int numSamples)
                             {
                                 p->v[i].swapSampleFlag = false;
 
-                                if (p->v[i].newLoopFlag)
+                                if (p->v[i].newLoopFlag == false)
                                 {
                                     p->v[i].data = NULL;
                                     continue;
                                 }
-                                
-                                updateSampleData(&p->v[i]);
+
+                                p->v[i].loopBegin    = p->v[i].newLoopBegin;
+                                p->v[i].loopEnd      = p->v[i].newLoopEnd;
+                                p->v[i].loopFlag     = p->v[i].newLoopFlag;
+                                p->v[i].data         = p->v[i].newData;
+                                p->v[i].length       = p->v[i].newLength;
+                                p->v[i].frac         = 0.0f;
+                                p->v[i].step         = p->v[i].newStep;
                                 
                                 while (p->v[i].index >= p->v[i].loopEnd)
                                     p->v[i].index = p->v[i].loopBegin + (p->v[i].index - p->v[i].loopEnd);
@@ -668,13 +659,19 @@ static void outputAudio(player *p, int *target, int numSamples)
                         {
                             p->v[i].swapSampleFlag = false;
                             
-                            if (p->v[i].newLoopFlag)
+                            if (p->v[i].newLoopFlag == false)
                             {
                                 p->v[i].data = NULL;
                                 continue;
                             }
-                            
-                            updateSampleData(&p->v[i]);
+
+                            p->v[i].loopBegin    = p->v[i].newLoopBegin;
+                            p->v[i].loopEnd      = p->v[i].newLoopEnd;
+                            p->v[i].loopFlag     = p->v[i].newLoopFlag;
+                            p->v[i].data         = p->v[i].newData;
+                            p->v[i].length       = p->v[i].newLength;
+                            p->v[i].frac         = 0.0f;
+                            p->v[i].step         = p->v[i].newStep;
 
                             while (p->v[i].index >= p->v[i].loopEnd)
                                 p->v[i].index = p->v[i].loopBegin + (p->v[i].index - p->v[i].loopEnd);
@@ -694,8 +691,8 @@ static void outputAudio(player *p, int *target, int numSamples)
             {
                 int i_smp;
 
-                tempVolume = (float)p->blepVol[i].last_value;
-                tempSample = (float)p->blep[i].last_value;
+                tempVolume = p->blepVol[i].last_value;
+                tempSample = p->blep[i].last_value;
 
                 tempVolume += ptm_blip_read_sample(&p->blepVol[i]);
                 tempSample += ptm_blip_read_sample(&p->blep[i]);
@@ -1150,14 +1147,17 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
     }
 
     bufread(&p->source->head.orderCount, 1, 1, fmodule);
-    if ((p->source->head.orderCount == 0) || (p->source->head.orderCount > 128))
+    if (p->source->head.orderCount == 0)
     {
         free(p->source);
         bufclose(fmodule);
 
         return (false);
     }
-
+    
+    if (p->source->head.orderCount > 128)
+        p->source->head.orderCount = 128;
+        
     bufread(&p->source->head.restartPos, 1, 1, fmodule);
     if ((mightBeSTK == true) && ((p->source->head.restartPos == 0)
         || (p->source->head.restartPos > 220)))
@@ -2560,7 +2560,7 @@ static void processChannel(player *p, mod_channel *ch)
                 s = &p->source->samples[ch->sample - 1];
 
                 if (s->length > 0)
-                    mixerSwapChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, s->attribute & 1 ? 2 : 1);
+                    mixerSwapChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, (s->attribute & 1) ? 2 : 1);
                 else
                     mixerSetChSource(p, ch->chanIndex, NULL, 0, 0, 0, 0, 0);
             }
@@ -2575,7 +2575,7 @@ static void processChannel(player *p, mod_channel *ch)
                 {
                     if (ch->offset > 0)
                     {
-                        mixerSetChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, ch->offset, s->attribute & 1 ? 2 : 1);
+                        mixerSetChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, ch->offset, (s->attribute & 1) ? 2 : 1);
 
                         if (p->minPeriod == PT_MIN_PERIOD) // PT/NT/STK/UST bug only
                         {
@@ -2588,7 +2588,7 @@ static void processChannel(player *p, mod_channel *ch)
                     }
                     else
                     {
-                        mixerSetChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, 0, s->attribute & 1 ? 2 : 1);
+                        mixerSetChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, 0, (s->attribute & 1) ? 2 : 1);
                     }
                 }
                 else
@@ -2603,7 +2603,7 @@ static void processChannel(player *p, mod_channel *ch)
         if ((p->tempPeriod >= p->minPeriod) && (p->tempPeriod <= p->maxPeriod))
             mixerSetChRate(p, ch->chanIndex, (p->minPeriod == PT_MIN_PERIOD) ? p->frequencyTable[(int)p->tempPeriod] : p->extendedFrequencyTable[(int)p->tempPeriod]);
         else
-            mixerSetChVol(p, ch->chanIndex, 0.0f); // arp override bugfix
+            mixerSetChVol(p, ch->chanIndex, 0); // arp override bugfix
     }
 }
 
