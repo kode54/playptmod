@@ -2250,7 +2250,7 @@ static void fxSampleOffset(player *p, mod_channel *ch)
     if (p->modTick == 0)
     {
         if (ch->param > 0)
-            ch->offsetTemp = (uint16_t)(ch->param) * 256;
+            ch->offsetTemp = (unsigned short)(ch->param) * 256;
 
         ch->offset += ch->offsetTemp;
         
@@ -2264,7 +2264,7 @@ static void fxSampleOffset_FT2(player *p, mod_channel *ch)
     if (p->modTick == 0)
     {
         if (ch->param > 0)
-            ch->offset = (uint16_t)(ch->param) * 256;
+            ch->offset = (unsigned short)(ch->param) * 256;
 
         ch->offsetBugNotAdded = true;
     }
