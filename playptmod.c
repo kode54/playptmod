@@ -1126,6 +1126,20 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
 
             p->source->samples[i].loopLength = bufGetWordBigEndian(fmodule) * 2;
 
+            // fix for poorly converted STK->PTMOD modules.
+            if (!mightBeSTK && ((s->loopStart + s->loopLength) > s->length))
+            {
+                if (((s->loopStart >> 1) + s->loopLength) <= s->length)
+                {
+                    s->loopStart >>= 1;
+                }
+                else
+                {
+                    s->loopStart  = 0;
+                    s->loopLength = 2;
+                }
+            }
+
             if (p->source->samples[i].loopLength < 2)
                 p->source->samples[i].loopLength = 2;
 
