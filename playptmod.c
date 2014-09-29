@@ -1,6 +1,9 @@
 /*
-** - playptmod v1.15 - 29th of September 2014 -
+** - playptmod v1.15a - 29th of September 2014 -
 ** This is the foobar2000 version, with code by kode54
+**
+** Changelog from 1.15:
+** - Fixed missing variable declaration
 **
 ** Changelog from 1.10d:
 ** - Removed obsolete IFF sample handling (FT2/PT didn't have it)
@@ -2725,7 +2728,7 @@ void playptmod_Render16(void *_p, short *target, int length)
     temp = target ? tempBuffer : NULL;
     while (length)
     {
-        tempSamples = CLAMP(length, 0, 256);
+        int tempSamples = CLAMP(length, 0, 256);
         playptmod_Render(p, temp, tempSamples);
         
         length -= tempSamples;
