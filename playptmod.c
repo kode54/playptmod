@@ -4,6 +4,8 @@
 **
 ** Changelog from 1.15:
 ** - Fixed missing variable declaration
+** - Cleaned up some type mismatch warnings
+** - Removed some variables which are no longer used
 **
 ** Changelog from 1.10d:
 ** - Removed obsolete IFF sample handling (FT2/PT didn't have it)
@@ -145,8 +147,8 @@ typedef struct
 typedef struct
 {
     char moduleLoaded;
-    char *sampleData;
-    char *originalSampleData;
+    signed char *sampleData;
+    signed char *originalSampleData;
     MODULE_HEADER head;
     MODULE_SAMPLE samples[31];
     modnote_t *patterns[256];
@@ -166,8 +168,8 @@ typedef struct paula_filter_coefficients
 
 typedef struct voice_data
 {
-    const char *newData;
-    const char *data;
+    const signed char *newData;
+    const signed char *data;
     char swapSampleFlag;
     char loopFlag;
     int length;
@@ -414,7 +416,7 @@ static inline int periodToNote(player *p, char finetune, short period)
     return i;
 }
 
-static void mixerSwapChSource(player *p, int ch, const char *src, int length, int loopStart, int loopLength, int step)
+static void mixerSwapChSource(player *p, int ch, const signed char *src, int length, int loopStart, int loopLength, int step)
 {
     Voice *v;
     
@@ -452,7 +454,7 @@ static void mixerSwapChSource(player *p, int ch, const char *src, int length, in
     }
 }
 
-static void mixerSetChSource(player *p, int ch, const char *src, int length, int loopStart, int loopLength, int offset, int step)
+static void mixerSetChSource(player *p, int ch, const signed char *src, int length, int loopStart, int loopLength, int offset, int step)
 {
     Voice *v;
     
@@ -874,7 +876,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
         }
     }
 
-    p->source->sampleData = (char *)malloc(totalSampleSize);
+    p->source->sampleData = (signed char *)malloc(totalSampleSize);
     if (!p->source->sampleData)
     {
         for (i = 0; i < 256; ++i)
@@ -906,7 +908,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
         sampleOffset += s->length;
     }
 
-    p->source->originalSampleData = (char *)malloc(totalSampleSize);
+    p->source->originalSampleData = (signed char *)malloc(totalSampleSize);
     if (p->source->originalSampleData == NULL)
     {
         free(p->source->sampleData);
@@ -1368,7 +1370,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
         p->source->head.totalSampleSize += s->length;
     }
 
-    p->source->sampleData = (char *)malloc(p->source->head.totalSampleSize);
+    p->source->sampleData = (signed char *)malloc(p->source->head.totalSampleSize);
     if (p->source->sampleData == NULL)
     {
         bufclose(fmodule);
@@ -1421,7 +1423,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
         }
     }
 
-    p->source->originalSampleData = (char *) malloc(p->source->head.totalSampleSize);
+    p->source->originalSampleData = (signed char *) malloc(p->source->head.totalSampleSize);
     if (p->source->originalSampleData == NULL)
     {
         bufclose(fmodule);
@@ -1619,10 +1621,6 @@ static effect_routine efxRoutines_FT2[16] =
 
 static void processInvertLoop(player *p, mod_channel *ch)
 {
-    char invertLoopTemp;
-    char *invertLoopData;
-    MODULE_SAMPLE *s;
-    
     if (ch->invertLoopSpeed > 0)
     {
         ch->invertLoopDelay += invertLoopSpeeds[ch->invertLoopSpeed];
