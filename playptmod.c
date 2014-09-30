@@ -3,7 +3,7 @@
 ** This is the foobar2000 version, with code by kode54
 **
 ** Changelog from 1.15a:
-** - Addded a hack to find out what 8xx pan is used (7-bit/8-bit)
+** - Added a hack to find out what 8xx pan is used (7-bit/8-bit)
 **
 ** Changelog from 1.10d:
 ** - Removed obsolete IFF sample handling (FT2/PT didn't have it)
@@ -1313,7 +1313,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
                         // Saga_Musix says: 8F instead of 80 is not a typo but
                         // required for a few mods which have 7-bit panning
                         // with slightly too big values
-                        if ((note->param > 0x8F) && (note->param != 0xA4)
+                        if ((note->param > 0x8F) && (note->param != 0xA4))
                             extendedPanning = true;
                     }
 
