@@ -70,7 +70,7 @@ int main(int argc, const char* const* argv)
         running = 1;
         while ( running && fade_start < fade_length )
 		{
-			playptmod_Render(player, sample_buffer, 2048);
+			playptmod_Render16(player, sample_buffer, 2048);
             if (playptmod_LoopCounter(player) >= 2)
             {
                 fade_buffer( sample_buffer, 2048, fade_start, fade_length );
