@@ -11,12 +11,12 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\blip_buf.c" />
     <ClCompile Include="..\..\..\playptmod.c" />
+    <ClCompile Include="..\..\..\pt_blep.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\blip_buf.h" />
     <ClInclude Include="..\..\..\playptmod.h" />
+    <ClInclude Include="..\..\..\pt_blep.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{44F9C02F-B2B5-475B-BA24-BC4032E18B44}</ProjectGuid>

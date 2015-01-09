@@ -11,18 +11,18 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\blip_buf.c">
+    <ClCompile Include="..\..\..\playptmod.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\playptmod.c">
+    <ClCompile Include="..\..\..\pt_blep.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\blip_buf.h">
+    <ClInclude Include="..\..\..\playptmod.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\playptmod.h">
+    <ClInclude Include="..\..\..\pt_blep.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
