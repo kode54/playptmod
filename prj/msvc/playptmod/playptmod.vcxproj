@@ -12,11 +12,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\playptmod.c" />
-    <ClCompile Include="..\..\..\pt_blep.c" />
+    <ClCompile Include="..\..\..\resampler.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\playptmod.h" />
-    <ClInclude Include="..\..\..\pt_blep.h" />
+    <ClInclude Include="..\..\..\resampler.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{44F9C02F-B2B5-475B-BA24-BC4032E18B44}</ProjectGuid>
@@ -54,7 +54,7 @@
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>WIN32;inline=__inline;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;RESAMPLER_DECORATE=pt;inline=__inline;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -70,7 +70,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;inline=__inline;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;RESAMPLER_DECORATE=pt;inline=__inline;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FloatingPointModel>Fast</FloatingPointModel>
       <EnableEnhancedInstructionSet>NoExtensions</EnableEnhancedInstructionSet>

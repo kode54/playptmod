@@ -14,7 +14,7 @@
     <ClCompile Include="..\..\..\playptmod.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\pt_blep.c">
+    <ClCompile Include="..\..\..\resampler.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -22,7 +22,7 @@
     <ClInclude Include="..\..\..\playptmod.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\pt_blep.h">
+    <ClInclude Include="..\..\..\resampler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
