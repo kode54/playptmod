@@ -449,8 +449,9 @@ static void mixerSwapChSource(player *p, int ch, const signed char *src, int len
     v->newStep         = step;
     v->interpolating   = 1;
     
-    // if the mixer was already shut down because of a short non-loop sample, force swap
-    if (v->data == NULL)
+    // if the mixer was already shut down earlier after a non-loop swap,
+    // force swap again, but only if the new sample has loop enabled (ONLY!)
+    if ((v->data == NULL) && v->newLoopFlag)
     {
         v->loopBegin    = v->newLoopBegin;
         v->loopEnd      = v->newLoopEnd;
@@ -458,16 +459,10 @@ static void mixerSwapChSource(player *p, int ch, const signed char *src, int len
         v->data         = v->newData;
         v->length       = v->newLength;
         v->step         = v->newStep;
-        
-        if (v->loopBegin > 2)
-        {
-            while (v->index >= v->loopEnd)
-                v->index = v->loopBegin + (v->index - v->loopEnd);
-        }
-        else if (v->index > v->length)
-        {
-            v->data = NULL;
-        }
+
+        // we need to wrap here for safety reasons
+        while (v->index >= v->loopEnd)
+            v->index = v->loopBegin + (v->index - v->loopEnd);
     }
 }
 
