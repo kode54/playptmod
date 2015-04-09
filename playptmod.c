@@ -127,7 +127,7 @@ typedef struct
 {
     char patternLoopRow;
     char patternLoopCounter;
-    char volume;
+    signed char volume;
     unsigned char sample;
     unsigned char command;
     unsigned char param;
@@ -224,7 +224,7 @@ typedef struct
     char pattBreakFlag;
     char pattDelayFlag;
     char forceEffectsOff;
-    char tempVolume;
+    signed char tempVolume;
     unsigned char modRow;
     unsigned char modSpeed;
     unsigned short modBPM;
@@ -1910,9 +1910,9 @@ static void setupGlissando(mod_channel *ch, short period)
 static void processGlissando(player *p, mod_channel *ch)
 {
     unsigned char i;
-    char l;
-    char m;
-    char h;
+    signed char l;
+    signed char m;
+    signed char h;
     
     const short *tablePointer;
     
@@ -2116,13 +2116,13 @@ static void processTremolo(player *p, mod_channel *ch)
 
             if (ch->tremoloPos < 128)
             {
-                p->tempVolume += (char)tremoloData;
+                p->tempVolume += (signed char)tremoloData;
                 if (p->tempVolume > 64)
                     p->tempVolume = 64;
             }
             else
             {
-                p->tempVolume -= (char)tremoloData;
+                p->tempVolume -= (signed char)tremoloData;
                 if (p->tempVolume < 0)
                     p->tempVolume = 0;
             }
@@ -2135,11 +2135,11 @@ static void processTremolo(player *p, mod_channel *ch)
 
 static void fxArpeggio(player *p, mod_channel *ch)
 {
-    char l;
-    char m;
-    char h;
-    char noteToAdd;
-    char arpeggioTick;
+    signed char l;
+    signed char m;
+    signed char h;
+    signed char noteToAdd;
+    signed char arpeggioTick;
     unsigned char i;
     short *tablePointer;
     

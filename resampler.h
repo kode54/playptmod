@@ -1,7 +1,8 @@
 #ifndef _RESAMPLER_H_
 #define _RESAMPLER_H_
 
-// Ugglay
+#define RESAMPLER_DECORATE playptmod
+
 #ifdef RESAMPLER_DECORATE
 #define PASTE(a,b) a ## b
 #define EVALUATE(a,b) PASTE(a,b)
