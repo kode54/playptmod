@@ -1,7 +1,12 @@
 /*
-** PLAYPTMOD v1.24 - 14th of April 2015 - http://16-bits.org
+** PLAYPTMOD v1.25 - 20th of April 2015 - http://16-bits.org
 ** =========================================================
 ** This is the foobar2000 version, with added code by kode54
+**
+** Changelog from 1.24:
+** - Sample swaps are now only handled for PT MODs
+** - Handle sample swapping even during note delay (EDx)
+** - "non-zero tick effects" should be handled in all ticks during pattern delay (EDx)
 **
 ** Changelog from 1.23:
 ** - Handle CD81 .MOD/.OCT (fixes "MOD.checkered_subgliep" and other modules)
@@ -2068,7 +2073,7 @@ static void processVibrato(player *p, mod_channel *ch)
     int applyVibrato;
 
     applyVibrato = 1;
-    if ((p->minPeriod == PT_MIN_PERIOD) && (p->modTick == 0)) /* PT/NT/UST/STK */
+    if ((p->minPeriod == PT_MIN_PERIOD) && ((p->modTick == 0) && (p->PattDelayTime2 == 0))) /* PT/NT/UST/STK */
         applyVibrato = 0;
 
     if (applyVibrato)
@@ -2125,7 +2130,7 @@ static void processTremolo(player *p, mod_channel *ch)
     int applyTremolo;
 
     applyTremolo = 1;
-    if ((p->minPeriod == PT_MIN_PERIOD) && (p->modTick == 0)) /* PT/NT/UST/STK */
+    if ((p->minPeriod == PT_MIN_PERIOD) && ((p->modTick == 0) && (p->PattDelayTime2 == 0))) /* PT/NT/UST/STK */
         applyTremolo = 0;
 
     if (applyTremolo)
@@ -2243,49 +2248,55 @@ static void fxArpeggio(player *p, mod_channel *ch)
 
 static void fxPortamentoSlideUp(player *p, mod_channel *ch)
 {
-    if ((p->modTick > 0) && (p->tempPeriod > 0))
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
     {
-        ch->period -= ch->param;
-
-        if (p->minPeriod == PT_MIN_PERIOD)
+        if (p->tempPeriod > 0)
         {
-            if (ch->period < 113)
-                ch->period = 113;
-        }
-        else
-        {
-            if (ch->period < p->minPeriod)
-                ch->period = p->minPeriod;
-        }
+            ch->period -= ch->param;
 
-        p->tempPeriod = ch->period;
+            if (p->minPeriod == PT_MIN_PERIOD)
+            {
+                if (ch->period < 113)
+                    ch->period = 113;
+            }
+            else
+            {
+                if (ch->period < p->minPeriod)
+                    ch->period = p->minPeriod;
+            }
+
+            p->tempPeriod = ch->period;
+        }
     }
 }
 
 static void fxPortamentoSlideDown(player *p, mod_channel *ch)
 {
-    if ((p->modTick > 0) && (p->tempPeriod > 0))
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
     {
-        ch->period += ch->param;
-
-        if (p->minPeriod == PT_MIN_PERIOD)
+        if (p->tempPeriod > 0)
         {
-            if (ch->period > 856)
-                ch->period = 856;
-        }
-        else
-        {
-            if (ch->period > p->maxPeriod)
-                ch->period = p->maxPeriod;
-        }
+            ch->period += ch->param;
 
-        p->tempPeriod = ch->period;
+            if (p->minPeriod == PT_MIN_PERIOD)
+            {
+                if (ch->period > 856)
+                    ch->period = 856;
+            }
+            else
+            {
+                if (ch->period > p->maxPeriod)
+                    ch->period = p->maxPeriod;
+            }
+
+            p->tempPeriod = ch->period;
+        }
     }
 }
 
 static void fxGlissando(player *p, mod_channel *ch)
 {
-    if (p->modTick > 0)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
     {
         if (ch->param != 0)
         {
@@ -2319,7 +2330,7 @@ static void fxVibrato(player *p, mod_channel *ch)
 
 static void fxGlissandoVolumeSlide(player *p, mod_channel *ch)
 {
-    if (p->modTick > 0)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
     {
         processGlissando(p, ch);
         fxVolumeSlide(p, ch);
@@ -2328,7 +2339,7 @@ static void fxGlissandoVolumeSlide(player *p, mod_channel *ch)
 
 static void fxVibratoVolumeSlide(player *p, mod_channel *ch)
 {
-    if (p->modTick > 0)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
     {
         processVibrato(p, ch);
         fxVolumeSlide(p, ch);
@@ -2391,7 +2402,7 @@ static void fxVolumeSlide(player *p, mod_channel *ch)
     unsigned char hiNybble;
     unsigned char loNybble;
 
-    if (p->modTick > 0)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
     {
         hiNybble = ch->param >> 4;
         loNybble = ch->param & 0x0F;
@@ -2680,8 +2691,12 @@ static void processChannel(player *p, mod_channel *ch)
                 {
                     ch->flags &= ~FLAG_NEWSAMPLE;
 
-                    if (((ch->period > 0) && ch->noNote) || (ch->command == 0x03) || (ch->command == 0x05))
-                        p->tempFlags |= TEMPFLAG_NEW_SAMPLE;
+                    // sample swapping (PT only)
+                    if ((ch->sample > 0) && (p->minPeriod == PT_MIN_PERIOD))
+                    {
+                        s = &p->source->samples[ch->sample - 1];
+                        mixerSwapChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, (s->attribute & 1) ? 2 : 1);
+                    }
                 }
             }
         }
@@ -2699,15 +2714,7 @@ static void processChannel(player *p, mod_channel *ch)
 
     if (!(p->tempFlags & TEMPFLAG_DELAY))
     {
-        if (p->tempFlags & TEMPFLAG_NEW_SAMPLE)
-        {
-            if (ch->sample > 0)
-            {
-                s = &p->source->samples[ch->sample - 1];
-                mixerSwapChSource(p, ch->chanIndex, p->source->sampleData + s->offset, s->length, s->loopStart, s->loopLength, (s->attribute & 1) ? 2 : 1);
-            }
-        }
-        else if (p->tempFlags & TEMPFLAG_START)
+        if (p->tempFlags & TEMPFLAG_START)
         {
             if (ch->sample > 0)
             {
