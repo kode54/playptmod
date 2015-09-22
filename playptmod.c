@@ -623,7 +623,7 @@ static void outputAudio(player *p, int *target, int numSamples)
             {
                 tempVolume = (v->data && !v->mute ? v->vol : 0);
 
-                while (interpolating && (resampler_get_free_count(bSmp) ||
+                while (interpolating > 0 && (resampler_get_free_count(bSmp) ||
                                          (!resampler_get_sample_count(bSmp) &&
                                           !resampler_get_sample_count(bVol))))
                 {
@@ -646,7 +646,7 @@ static void outputAudio(player *p, int *target, int numSamples)
 
                                     if (!v->newLoopFlag)
                                     {
-                                        interpolating = 0;
+                                        interpolating = -resampler_get_padding_size();
                                         break;
                                     }
 
@@ -673,7 +673,7 @@ static void outputAudio(player *p, int *target, int numSamples)
 
                                 if (!v->newLoopFlag)
                                 {
-                                    interpolating = 0;
+                                    interpolating = -resampler_get_padding_size();
                                     break;
                                 }
 
@@ -688,11 +688,20 @@ static void outputAudio(player *p, int *target, int numSamples)
                             }
                             else
                             {
-                                interpolating = 0;
+                                interpolating = -resampler_get_padding_size();
                                 break;
                             }
                         }
                     }
+                }
+
+                while (interpolating < 0 && (resampler_get_free_count(bSmp) ||
+                                         (!resampler_get_sample_count(bSmp) &&
+                                          !resampler_get_sample_count(bVol))))
+                {
+                    resampler_write_sample_fixed(bSmp, 0, 1);
+                    resampler_write_sample_fixed(bVol, 0, 1);
+                    ++interpolating;
                 }
 
                 v->interpolating = interpolating;
@@ -941,7 +950,7 @@ static int playptmod_LoadMTM(player *p, BUF *fmodule)
 
     p->useLEDFilter = false;
     p->moduleLoaded = true;
-    
+
     p->minPeriod = 14;
     p->maxPeriod = 1712;
 
@@ -1199,7 +1208,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
             s->attribute = 0;
         }
     }
-    
+
     /* STK 2.5 had loopStart in words, not bytes. Convert if late version STK */
     for (i = 0; i < 15; ++i)
     {
@@ -2362,7 +2371,7 @@ static void fxTremolo(player *p, mod_channel *ch)
         if (loNybble > 0)
             ch->tremoloDepth = loNybble;
     }
-    
+
     processTremolo(p, ch);
 }
 
@@ -2622,7 +2631,7 @@ static void fetchPatternData(player *p, mod_channel *ch)
             ch->tempPeriod = (p->minPeriod == PT_MIN_PERIOD) ? rawAmigaPeriods[(ch->fineTune * ((12 * 3) + 1)) + tempNote] : extendedRawPeriods[(ch->fineTune * ((12 * 7) + 1)) + tempNote];
             ch->flags |= FLAG_NOTE;
         }
-        
+
         /* do a slightly different path for 3xx/5xy in PT mode */
         if (p->minPeriod == PT_MIN_PERIOD)
         {
@@ -2680,7 +2689,7 @@ static void processChannel(player *p, mod_channel *ch)
                 ch->invertLoopPtr = &p->source->sampleData[s->offset + s->loopStart];
                 ch->invertLoopStart = ch->invertLoopPtr;
                 ch->invertLoopLength = s->loopLength;
-                
+
                 if ((ch->command != 0x03) && (ch->command != 0x05))
                 {
                     ch->offset = 0;
@@ -3046,7 +3055,7 @@ void playptmod_Free(void *_p)
             free(p->source);
             p->source = NULL;
         }
-        
+
         p->moduleLoaded = false;
     }
 
@@ -3085,7 +3094,7 @@ void playptmod_Free(void *_p)
         resampler_delete(p->blep[i]);
         resampler_delete(p->blepVol[i]);
     }
-    
+
     free(p);
 }
 
