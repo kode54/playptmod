@@ -722,7 +722,7 @@ static void outputAudio(player *p, int *target, int numSamples)
                     j++;
                 }
 
-                if (!interpolating)
+                if (!interpolating && !resampler_get_sample_count(bSmp))
                 {
                     v->data = NULL;
                     break;
