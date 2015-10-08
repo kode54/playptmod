@@ -1,7 +1,10 @@
 /*
-** PLAYPTMOD v1.25 - 20th of April 2015 - http://16-bits.org
-** =========================================================
+** PLAYPTMOD v1.26 - 8th of October 2015 - http://16-bits.org
+** ==========================================================
 ** This is the foobar2000 version, with added code by kode54
+**
+** Changelog from 1.25:
+** - Invert Loop (EFx) was inaccurate
 **
 ** Changelog from 1.24:
 ** - Sample swaps are now only handled for PT MODs
@@ -1714,15 +1717,14 @@ static void processInvertLoop(player *p, mod_channel *ch)
     if (ch->invertLoopSpeed > 0)
     {
         ch->invertLoopDelay += invertLoopSpeeds[ch->invertLoopSpeed];
-        if (ch->invertLoopDelay & 128)
+        if (ch->invertLoopDelay >= 128)
         {
             ch->invertLoopDelay = 0;
 
-            if (ch->invertLoopPtr != NULL) /* PT doesn't do this, but we're more sane than that */
+            if (ch->invertLoopPtr != NULL) /* SAFETY BUG FIX */
             {
-                ch->invertLoopPtr++;
-                if (ch->invertLoopPtr >= (ch->invertLoopStart + ch->invertLoopLength))
-                    ch->invertLoopPtr  =  ch->invertLoopStart;
+                if (++ch->invertLoopPtr >= (ch->invertLoopStart + ch->invertLoopLength))
+                      ch->invertLoopPtr  =  ch->invertLoopStart;
 
                 *ch->invertLoopPtr = -1 - *ch->invertLoopPtr;
             }
@@ -2522,7 +2524,8 @@ static void fxSetTempo(player *p, mod_channel *ch)
 
 static void processEffects(player *p, mod_channel *ch)
 {
-    processInvertLoop(p, ch);
+	if (editor.modTick > 0)
+		processInvertLoop(p, ch);
 
     if ((!ch->command && !ch->param) == 0)
     {
