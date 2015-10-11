@@ -2524,7 +2524,7 @@ static void fxSetTempo(player *p, mod_channel *ch)
 
 static void processEffects(player *p, mod_channel *ch)
 {
-	if (editor.modTick > 0)
+	if (p->modTick > 0)
 		processInvertLoop(p, ch);
 
     if ((!ch->command && !ch->param) == 0)
