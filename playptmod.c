@@ -1,7 +1,10 @@
 /*
-** PLAYPTMOD v1.26 - 8th of October 2015 - http://16-bits.org
+** PLAYPTMOD v1.27 - 8th of October 2015 - http://16-bits.org
 ** ==========================================================
 ** This is the foobar2000 version, with added code by kode54
+**
+** Changelog from 1.26:
+** - Only loop module if speed is zero after fully processing an entire row
 **
 ** Changelog from 1.25:
 ** - Invert Loop (EFx) was inaccurate
@@ -2505,20 +2508,10 @@ static void fxSetTempo(player *p, mod_channel *ch)
 {
     if (p->modTick == 0)
     {
-        if (ch->param > 0)
-        {
-            if ((ch->param < 32) || p->vBlankTiming)
-                modSetSpeed(p, ch->param);
-            else
-                modSetTempo(p, ch->param);
-        }
+        if ((ch->param < 32) || p->vBlankTiming)
+            modSetSpeed(p, ch->param);
         else
-        {
-            /* Bit of a hack, will alert caller that song has restarted */
-            p->modOrder = p->source->head.clippedRestartPos;
-            p->PBreakPosition = 0;
-            p->PosJumpAssert = true;
-        }
+            modSetTempo(p, ch->param);
     }
 }
 
@@ -2816,6 +2809,18 @@ static void processTick(player *p)
         if (p->pattBreakFlag && p->pattDelayFlag)
             p->forceEffectsOff = true;
     }
+
+    /* Only process speed 0 effect after processing entire row */
+    if (p->modSpeed == 0)
+    {
+        /* Bit of a hack, will alert code below of a full repeat */
+        p->modOrder = p->source->head.clippedRestartPos;
+        modSetSpeed(p, 6);
+        p->modTick = 6; /* cause instant repeat */
+        p->PBreakPosition = 0;
+        p->PosJumpAssert = true;
+    }
+
 
     p->modTick++;
     if (p->modTick >= p->modSpeed)
