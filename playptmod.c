@@ -456,7 +456,7 @@ static inline int periodToNote(player *p, char finetune, short period)
             break;
     }
 
-    return i;
+    return (i);
 }
 
 static void mixerSwapChSource(player *p, int ch, const signed char *src, int length, int loopStart, int loopLength, int step)
@@ -472,30 +472,30 @@ static void mixerSwapChSource(player *p, int ch, const signed char *src, int len
 
     v = &p->v[ch];
 
-    v->loopQuirk       = false;
-    v->swapSampleFlag  = true;
-    v->newData         = src;
-    v->newLoopFlag     = (loopStart + loopLength) > (2 * step);
-    v->newLength       = length;
-    v->newLoopBegin    = loopStart;
-    v->newLoopEnd      = loopStart + loopLength;
-    v->newStep         = step;
-    v->interpolating   = 1;
+    v->loopQuirk      = false;
+    v->swapSampleFlag = true;
+    v->newData        = src;
+    v->newLoopFlag    = (loopStart + loopLength) > (2 * step);
+    v->newLength      = length;
+    v->newLoopBegin   = loopStart;
+    v->newLoopEnd     = loopStart + loopLength;
+    v->newStep        = step;
+    v->interpolating  = 1;
 
     // if the mixer was already shut down earlier after a non-loop swap,
     // force swap again, but only if the new sample has loop enabled (ONLY!)
     if ((v->data == NULL) && v->newLoopFlag)
     {
-        v->loopBegin    = v->newLoopBegin;
-        v->loopEnd      = v->newLoopEnd;
-        v->loopFlag     = v->newLoopFlag;
-        v->data         = v->newData;
-        v->length       = v->newLength;
-        v->step         = v->newStep;
+        v->loopBegin = v->newLoopBegin;
+        v->loopEnd   = v->newLoopEnd;
+        v->loopFlag  = v->newLoopFlag;
+        v->data      = v->newData;
+        v->length    = v->newLength;
+        v->step      = v->newStep;
 
         /* we need to wrap here for safety reasons */
         while (v->index >= v->loopEnd)
-            v->index = v->loopBegin + (v->index - v->loopEnd);
+               v->index = v->loopBegin + (v->index - v->loopEnd);
     }
 }
 
@@ -530,7 +530,7 @@ static void mixerSetChSource(player *p, int ch, const signed char *src, int leng
         if (offset >= v->length)
             v->data = NULL;
     }
-    
+
     /* PT specific quirks */
     if (p->minPeriod == PT_MIN_PERIOD)  
     {
@@ -544,7 +544,7 @@ static void mixerSetChSource(player *p, int ch, const signed char *src, int leng
         /* 9xx on >64kB samples = kill voice */
         if ((length > 65534) && (offset > 0))
         {
-            v->loopQuirk = 0;
+            v->loopQuirk = false;
             v->data = NULL;
         }
     }
@@ -683,12 +683,12 @@ static void outputAudio(player *p, int *target, int numSamples)
                                         break;
                                     }
 
-                                    v->loopBegin    = v->newLoopBegin;
-                                    v->loopEnd      = v->newLoopEnd;
-                                    v->loopFlag     = v->newLoopFlag;
-                                    v->data         = v->newData;
-                                    v->length       = v->newLength;
-                                    v->step         = v->newStep;
+                                    v->loopBegin = v->newLoopBegin;
+                                    v->loopEnd   = v->newLoopEnd;
+                                    v->loopFlag  = v->newLoopFlag;
+                                    v->data      = v->newData;
+                                    v->length    = v->newLength;
+                                    v->step      = v->newStep;
 
                                     v->index = v->loopBegin;
                                 }
@@ -716,12 +716,12 @@ static void outputAudio(player *p, int *target, int numSamples)
                                     break;
                                 }
 
-                                v->loopBegin    = v->newLoopBegin;
-                                v->loopEnd      = v->newLoopEnd;
-                                v->loopFlag     = v->newLoopFlag;
-                                v->data         = v->newData;
-                                v->length       = v->newLength;
-                                v->step         = v->newStep;
+                                v->loopBegin = v->newLoopBegin;
+                                v->loopEnd   = v->newLoopEnd;
+                                v->loopFlag  = v->newLoopFlag;
+                                v->data      = v->newData;
+                                v->length    = v->newLength;
+                                v->step      = v->newStep;
 
                                 v->index = v->loopBegin;
                             }
@@ -1180,7 +1180,7 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
     {
         i = playptmod_LoadMTM(p, fmodule);
         bufclose(fmodule);
-        return i;
+        return (i);
     }
 
     bufseek(fmodule, 0x0438, SEEK_SET);
@@ -1637,7 +1637,7 @@ int playptmod_Load(void *_p, const char *filename)
 
         free(buffer);
 
-        return i;
+        return (i);
     }
 
     return (false);
@@ -2315,7 +2315,7 @@ static void fxArpeggio(player *p, mod_channel *ch)
 
 static void fxPortamentoSlideUp(player *p, mod_channel *ch)
 {
-    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) /* all ticks while EDx (weird) */
     {
         if (p->tempPeriod > 0)
         {
@@ -2339,7 +2339,7 @@ static void fxPortamentoSlideUp(player *p, mod_channel *ch)
 
 static void fxPortamentoSlideDown(player *p, mod_channel *ch)
 {
-    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) /* all ticks while EDx (weird) */
     {
         if (p->tempPeriod > 0)
         {
@@ -2363,7 +2363,7 @@ static void fxPortamentoSlideDown(player *p, mod_channel *ch)
 
 static void fxGlissando(player *p, mod_channel *ch)
 {
-    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) /* all ticks while EDx (weird) */
     {
         if (ch->param != 0)
         {
@@ -2397,7 +2397,7 @@ static void fxVibrato(player *p, mod_channel *ch)
 
 static void fxGlissandoVolumeSlide(player *p, mod_channel *ch)
 {
-    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) /* all ticks while EDx (weird) */
     {
         processGlissando(p, ch);
         fxVolumeSlide(p, ch);
@@ -2406,7 +2406,7 @@ static void fxGlissandoVolumeSlide(player *p, mod_channel *ch)
 
 static void fxVibratoVolumeSlide(player *p, mod_channel *ch)
 {
-    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) /* all ticks while EDx (weird) */
     {
         processVibrato(p, ch);
         fxVolumeSlide(p, ch);
@@ -2469,7 +2469,7 @@ static void fxVolumeSlide(player *p, mod_channel *ch)
     unsigned char hiNybble;
     unsigned char loNybble;
 
-    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) // all ticks while EDx (weird)
+    if ((p->modTick > 0) || (p->PattDelayTime2 > 0)) /* all ticks while EDx (weird) */
     {
         hiNybble = ch->param >> 4;
         loNybble = ch->param & 0x0F;
@@ -2523,7 +2523,7 @@ static void fxPatternBreak(player *p, mod_channel *ch)
 
     if (p->modTick == 0)
     {
-        pos = (((ch->param >> 4) * 10) + (ch->param & 0x0F));
+        pos = ((ch->param >> 4) * 10) + (ch->param & 0x0F);
 
         if (pos > 63)
             p->PBreakPosition = 0;
@@ -2570,8 +2570,8 @@ static void fxSetTempo(player *p, mod_channel *ch)
 
 static void processEffects(player *p, mod_channel *ch)
 {
-	if (p->modTick > 0)
-		processInvertLoop(p, ch);
+    if (p->modTick > 0)
+        processInvertLoop(p, ch);
 
     if ((!ch->command && !ch->param) == 0)
     {
@@ -2749,7 +2749,7 @@ static void processChannel(player *p, mod_channel *ch)
                 {
                     ch->flags &= ~FLAG_NEWSAMPLE;
 
-                    // sample swapping (PT only)
+                    /* sample swapping (PT only) */
                     if ((ch->sample > 0) && (p->minPeriod == PT_MIN_PERIOD))
                     {
                         s = &p->source->samples[ch->sample - 1];
@@ -2874,7 +2874,6 @@ static void processTick(player *p)
         p->PosJumpAssert = true;
     }
 
-
     p->modTick++;
     if (p->modTick >= p->modSpeed)
     {
@@ -2930,6 +2929,7 @@ void playptmod_Render(void *_p, int *target, int length)
                     outputAudio(p, target, tempSamples);
                     target += tempSamples * 2;
                 }
+                
                 p->sampleCounter -= tempSamples;
                 length -= tempSamples;
             }
@@ -2989,12 +2989,12 @@ void *playptmod_Create(int samplingFrequency)
     for (i = 14; i <= 1712; ++i) /* 0..13 will never be looked up, junk is OK */
         p->extendedFrequencyTable[i] = (float)samplingFrequency / (3546895.0f / (float)i);
 
-    // generate extended period table
+    /* generate extended period table */
     for (j = 0; j < 16; ++j)
         for (i = 0; i < ((12 * 7) + 1); ++i)
             extendedRawPeriods[(j * ((12 * 7) + 1)) + i] = (i == (12 * 7)) ? 0 : (npertab[i] * 8363 / finetune[j]);
 
-    // add padding (zeroes)
+    /* add padding (zeroes) */
     for (i = 0; i < 14; ++i)
         extendedRawPeriods[(16 * ((12 * 7) + 1)) + i] = 0;
 
@@ -3018,7 +3018,7 @@ void *playptmod_Create(int samplingFrequency)
 
     mixerCutChannels(p);
 
-    return p;
+    return (p);
 }
 
 void playptmod_Config(void *_p, int option, int value)
