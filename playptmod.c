@@ -1,7 +1,13 @@
 /*
-** PLAYPTMOD v1.27 - 8th of October 2015 - http://16-bits.org
-** ==========================================================
+** PLAYPTMOD v1.3 - 20th of February 2016 - http://16-bits.org
+** ===========================================================
 ** This is the foobar2000 version, with added code by kode54
+**
+** Changelog from 1.27:
+** - Added support for FEST modules (.MOD with "FEST" tag instead of "M.K.")
+** - Added the one-shot loop quirk for PT MODs
+** - When setting mixSource, check loopLen>2 *or* loopStart>0 (yes, like PT)
+** - Using 9xx on a >64kB sample should result in killing the voice (PT only)
 **
 ** Changelog from 1.26:
 ** - Only loop module if speed is zero after fully processing an entire row
@@ -215,6 +221,7 @@ typedef struct voice_data
     int newLoopBegin;
     int newLoopEnd;
     int index;
+    int loopQuirk;
     int vol;
     int panL;
     int panR;
@@ -465,9 +472,10 @@ static void mixerSwapChSource(player *p, int ch, const signed char *src, int len
 
     v = &p->v[ch];
 
+    v->loopQuirk       = false;
     v->swapSampleFlag  = true;
     v->newData         = src;
-    v->newLoopFlag     = loopLength > (2 * step);
+    v->newLoopFlag     = (loopStart + loopLength) > (2 * step);
     v->newLength       = length;
     v->newLoopBegin    = loopStart;
     v->newLoopEnd      = loopStart + loopLength;
@@ -497,11 +505,12 @@ static void mixerSetChSource(player *p, int ch, const signed char *src, int leng
 
     v = &p->v[ch];
 
+    v->loopQuirk      = false;
     v->swapSampleFlag = false;
     v->data           = src;
     v->index          = offset;
     v->length         = length;
-    v->loopFlag       = loopLength > (2 * step);
+    v->loopFlag       = (loopStart + loopLength) > (2 * step);
     v->loopBegin      = loopStart;
     v->loopEnd        = loopStart + loopLength;
     v->step           = step;
@@ -520,6 +529,24 @@ static void mixerSetChSource(player *p, int ch, const signed char *src, int leng
     {
         if (offset >= v->length)
             v->data = NULL;
+    }
+    
+    /* PT specific quirks */
+    if (p->minPeriod == PT_MIN_PERIOD)  
+    {
+        /* One-shot loops */
+        if ((loopLength > 2) && (loopStart == 0))
+        {
+            v->loopQuirk = v->loopEnd;
+            v->loopEnd   = v->length;
+        }
+        
+        /* 9xx on >64kB samples = kill voice */
+        if ((length > 65534) && (offset > 0))
+        {
+            v->loopQuirk = 0;
+            v->data = NULL;
+        }
     }
 }
 
@@ -668,6 +695,12 @@ static void outputAudio(player *p, int *target, int numSamples)
                                 else
                                 {
                                     v->index = v->loopBegin;
+                                    
+                                    if (v->loopQuirk)
+                                    {
+                                        v->loopEnd   = v->loopQuirk;
+                                        v->loopQuirk = false;
+                                    }
                                 }
                             }
                         }
@@ -1075,7 +1108,17 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
+    else if (!strncmp(buf, "FEST", 4))
+    {
+        h->format = FORMAT_FEST; /* NoiseTracker 1.0, special ones (from music disk?) */
+        p->numChans = h->channelCount = 4;
 
+        /* Normal period range */
+        p->minPeriod = PT_MIN_PERIOD;
+        p->maxPeriod = PT_MAX_PERIOD;
+        return;
+    }
+    
     h->format = FORMAT_UNKNOWN; /* May be The Ultimate SoundTracker, 15 samples */
     p->numChans = h->channelCount = 4;
 
@@ -1165,8 +1208,12 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
             if (s->length > 9999)
                 lateVerSTKFlag = true; /* Only used if mightBeSTK is set */
 
-            bufread(&s->fineTune, 1, 1, fmodule);
-            s->fineTune = s->fineTune & 0x0F;
+            tmp = 0;
+            bufread(&tmp, 1, 1, fmodule); /* xxx: is this big-endian safe? */
+            if (p->source->head.format == FORMAT_FEST)
+                s->fineTune = (-tmp & 0x1F) / 2; /* One more bit of precision, + inverted */
+            else
+                s->fineTune = tmp & 0x0F;
 
             bufread(&s->volume, 1, 1, fmodule);
             if (s->volume > 64)
@@ -1381,8 +1428,14 @@ int playptmod_LoadMem(void *_p, const unsigned char *buf, unsigned long bufLengt
                         if ((note->param > 0x8F) && (note->param != 0xA4))
                             extendedPanning = true;
                     }
-
-                    if (mightBeSTK)
+                    
+                    if (p->source->head.format == FORMAT_FEST)
+                    {
+                        /* Any Dxx == D00 in FEST modules */
+                        if (note->command == 0x0D)
+                            note->param = 0x00;
+                    }
+                    else if (mightBeSTK)
                     {
                         // Convert STK effects to PT effects
                         // TODO: Add tracker checking, as there
