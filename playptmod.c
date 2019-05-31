@@ -3,6 +3,9 @@
 ** ===========================================================
 ** This is the foobar2000 version, with added code by kode54
 **
+** Changelog from 1.28:
+** - Added support for more than 32 channel, NSMS, and LARD modules (NSMS from kingdomofpleasure.mod)
+**
 ** Changelog from 1.27:
 ** - Added support for FEST modules (.MOD with "FEST" tag instead of "M.K.")
 ** - Added the one-shot loop quirk for PT MODs
@@ -1013,7 +1016,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
-    else if (!strncmp(buf, "M!K!", 4))
+    else if ((!strncmp(buf, "M!K!", 4) || !strncmp(buf, "PATT", 4)))
     {
         h->format = FORMAT_MK2; /* ProTracker v2.x (if >64 patterns) */
         p->numChans = h->channelCount = 4;
@@ -1023,7 +1026,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
-    else if (!strncmp(buf, "FLT4", 4))
+    else if ((!strncmp(buf, "FLT4", 4) || !strncmp(buf, "EXO4", 4)))
     {
         h->format = FORMAT_FLT4; /* StarTrekker (4 channel MODs only) */
         p->numChans = h->channelCount = 4;
@@ -1033,9 +1036,9 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
-    else if (!strncmp(buf, "FLT8", 4))
+    else if ((!strncmp(buf, "FLT8", 4) || !strncmp(buf, "EXO8", 4)))
     {
-        h->format = FORMAT_FLT8;
+        h->format = FORMAT_FLT8; /* StarTrekker (8 channel MOD) */
         p->numChans = h->channelCount = 8;
 
         /* Normal period range */
@@ -1043,19 +1046,29 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
-    else if (!strncmp(buf, "CD81", 4))
+    else if (!strncmp(buf, "CD", 2) && buf[0] >= '1' && buf[0] <= '9' && !strncmp(buf + 3, "1", 1))
     {
-        h->format = FORMAT_NNCH; /* Octalyzer (Atari STE/Falcon) */
-        p->numChans = h->channelCount = 8;
+        h->format = FORMAT_NCHN; /* Octalyzer (Atari STE/Falcon) */
+        p->numChans = h->channelCount = buf[2] - '0';
 
         /* Normal period range (yes, CD81 has no extended periods) */
         p->minPeriod = PT_MIN_PERIOD;
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
+    else if (!strncmp(buf, "FA0", 3) && buf[3] >= '1' && buf[3] <= '9')
+    {
+        h->format = FORMAT_NCHN; /* DigiTracker (Atari Falcon) */
+        p->numChans = h->channelCount = buf[3] - '0';
+
+        /* Normal period range */
+        p->minPeriod = PT_MIN_PERIOD;
+        p->maxPeriod = PT_MAX_PERIOD;
+        return;
+    }
     else if (!strncmp(buf + 1, "CHN", 3) && buf[0] >= '1' && buf[0] <= '9')
     {
-        h->format = FORMAT_NCHN; /* FastTracker II (1-9 channel MODs) */
+        h->format = FORMAT_NCHN; /* FastTracker II/TakeTracker (1-9 channel MODs) */
         p->numChans = h->channelCount = buf[0] - '0';
 
         /* Extended period range */
@@ -1063,35 +1076,41 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
         p->maxPeriod = 1712;
         return;
     }
-    else if (!strncmp(buf + 2, "CH", 2) && buf[0] >= '1' && buf[0] <= '3' && buf[1] >= '0' && buf[1] <= '9')
+    else if (!strncmp(buf + 2, "CH", 2) && buf[0] >= '0' && buf[0] <= '9' && buf[1] >= '0' && buf[1] <= '9')
     {
-        h->format = FORMAT_NNCH; /* FastTracker II (10-32 channel MODs) */
+        h->format = FORMAT_NNCH; /* FastTracker II/TakeTracker (10-99 channel MODs) */
         p->numChans = h->channelCount = (buf[0] - '0') * 10 + (buf[1] - '0');
-        if (h->channelCount > 32)
-        {
-            h->format = FORMAT_UNKNOWN;
-            h->channelCount = 4;
-        }
 
         /* Extended period range */
         p->minPeriod = 14;
         p->maxPeriod = 1712;
         return;
     }
-    else if (!strncmp(buf, "16CN", 4))
+
+    else if (!strncmp(buf + 2, "CN", 2) && buf[0] >= '0' && buf[0] <= '9' && buf[1] >= '0' && buf[1] <= '9')
     {
-        h->format = FORMAT_16CN;
-        p->numChans = h->channelCount = 16;
+        h->format = FORMAT_NNCN; /* TakeTracker (10-99 channel MODs) */
+        p->numChans = h->channelCount = ((buf[0] - '0') * 10) + (buf[1] - '0');
 
         /* Extended period range */
         p->minPeriod = 14;
         p->maxPeriod = 1712;
         return;
     }
-    else if (!strncmp(buf, "32CN", 4))
+    else if (!strncmp(buf + 3, "C", 1) && buf[0] >= '0' && buf[0] <= '9' && buf[1] >= '0' && buf[1] <= '9' && buf[2] >= '0' && buf[2] <= '9')
     {
-        h->format = FORMAT_32CN;
-        p->numChans = h->channelCount = 32;
+        h->format = FORMAT_NNNC; /* (100-999 channel MODs) */
+        p->numChans = h->channelCount = ((buf[0] - '0') * 100) + ((buf[1] - '0') * 10) + (buf[2] - '0');
+
+        /* Extended period range */
+        p->minPeriod = 14;
+        p->maxPeriod = 1712;
+        return;
+    }
+    else if (!strncmp(buf, "TDZ", 3) && buf[3] >= '1' && buf[3] <= '9')
+    {
+        h->format = FORMAT_NCHN; /* TakeTracker (1-9 channel MODs) */
+        p->numChans = h->channelCount = buf[3] - '0';
 
         /* Extended period range */
         p->minPeriod = 14;
@@ -1108,9 +1127,19 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
-    else if (!strncmp(buf, "FEST", 4))
+    else if ((!strncmp(buf, "FEST", 4) || !strncmp(buf, "FIST", 4)))
     {
         h->format = FORMAT_FEST; /* NoiseTracker 1.0, special ones (from music disk?) */
+        p->numChans = h->channelCount = 4;
+
+        /* Normal period range */
+        p->minPeriod = PT_MIN_PERIOD;
+        p->maxPeriod = PT_MAX_PERIOD;
+        return;
+    }
+    else if ((!strncmp(buf, "NSMS", 4) || !strncmp(buf, "LARD", 4)))
+    {
+        h->format = FORMAT_UNKNOWN;
         p->numChans = h->channelCount = 4;
 
         /* Normal period range */
