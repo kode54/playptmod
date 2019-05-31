@@ -10,20 +10,20 @@ enum
     FORMAT_MK,     // ProTracker 1.x
     FORMAT_MK2,    // ProTracker 2.x (if tune has >64 patterns)
     FORMAT_FLT4,   // StarTrekker
-    FORMAT_FLT8,
-    FORMAT_NCHN,   // FastTracker II (only 1-9 channel MODs)
-    FORMAT_NNCH,   // FastTracker II (10-32 channel MODs)
-    FORMAT_16CN,   // FastTracker II (16 channel MODs)
-    FORMAT_32CN,   // FastTracker II (32 channel MODs)
+    FORMAT_FLT8,   // StarTrekker
+    FORMAT_NCHN,   // FastTracker II/TakeTracker (1-9 channel MODs)
+    FORMAT_NNCH,   // FastTracker II/TakeTracker (10-99 channel MODs)
+    FORMAT_NNNC,   // (100-999 channel MODs)
+    FORMAT_NNCN,   // TakeTracker (10-99 channel MODs)
     FORMAT_STK,    // The Ultimate SoundTracker (15 samples)
     FORMAT_NT,     // NoiseTracker 1.0
     FORMAT_FEST,   // NoiseTracker (special ones)
-    
+
     FORMAT_MTM,    // MultiTracker
-    
+
     FORMAT_UNKNOWN
 };
-    
+
 void * playptmod_Create(int samplingFrequency);
 
 #define PTMOD_OPTION_CLAMP_PERIODS 0
