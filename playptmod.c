@@ -1046,7 +1046,7 @@ static void checkModType(MODULE_HEADER *h, player *p, const char *buf)
         p->maxPeriod = PT_MAX_PERIOD;
         return;
     }
-    else if (!strncmp(buf, "CD", 2) && buf[0] >= '1' && buf[0] <= '9' && !strncmp(buf + 3, "1", 1))
+    else if (!strncmp(buf, "CD", 2) && buf[2] >= '1' && buf[2] <= '9' && !strncmp(buf + 3, "1", 1))
     {
         h->format = FORMAT_NCHN; /* Octalyzer (Atari STE/Falcon) */
         p->numChans = h->channelCount = buf[2] - '0';
